@@ -3,8 +3,9 @@
 Goal: take an input cooking video and remake it as Japanese anime with a
 customizable prompt. The output keeps the original's motions, gestures and emotion,
 has a detailed, photographic, professional look, contains no text, logos or
-watermarks, keeps the original soundtrack by default (or, if the user chooses,
-regenerates it with Fish Audio voice and synced foley), and exports at 720p or 1080p.
+watermarks, and has **no narration**. The original sound is removed and a new soundtrack
+is made to match the new video (Fish Audio Drama 3 for the people's voice sounds, a foley
+model for the kitchen sounds). Output is 720p or 1080p.
 
 **Everything is driven by prompts.**
 - *What it looks like* comes from the style prompt plus a restyled keyframe.
@@ -31,8 +32,8 @@ provider interface, so it can run on a **local** GPU (ComfyUI / Python) or a
 | 5 | **Work per shot.** | Scene detection splits the video at cuts. Each shot gets its own description, and long shots are split into chunks of about 5 s. |
 | 6 | **"Anime" vs "photographic texture" is a setting.** | A style preset (e.g. Shinkai-style lighting, painterly backgrounds, glossy realistic food, shallow depth of field, film grain) plus a `realism` value (0–1) that changes the prompt wording and the LoRA weights. |
 | 7 | **1080p is an upscale step.** | Open video models generate at 720p at most. Generate at 720p, then use a temporally consistent upscaler (SeedVR2 / cloud) and RIFE interpolation to 24/30 fps. |
-| 8 | **Keep the original sound by default.** | The output has exactly the same length and timeline as the input: every chunk is generated with the source's frame count, then re-timed to the source fps. Chunk boundaries are pinned to the original frames, so the original audio stays in sync at least at every boundary, and close to it in between. The original track is copied over, only loudness-normalized. |
-| 9 | **Regenerating the sound is opt-in.** | Users can choose `audio.mode: regenerate` (new soundtrack) or `mix` (original sound plus additions), and pick the parts: **sfx**, generated from the new video by a foley model (HunyuanVideo-Foley / ControlFoley / MMAudio) and guided by the sound cues; **narration**, Japanese with emotion from Fish Audio **Drama 3**, which is text-to-speech only, via API or open weights; **bgm**. `mix` can also drop the original voice or music (Demucs stem split) while keeping the real kitchen sound. |
+| 8 | **Remove the original sound and make a new one; no narration.** | The source audio is thrown away. There is no spoken narration and no script, so no transcript stage. The new soundtrack has two layers, both timed to the *generated* video. |
+| 9 | **Drama 3 for voice sounds, foley for kitchen sounds.** | Fish Audio **Drama 3** (Oct 2026; API or open weights) is a speech model. It makes sounds a *person* makes, such as breaths, sighs, a pleased "mm~", a small laugh or humming, timed to the emotion beats from the VLM. It cannot make sizzling, chopping or boiling, so those come from a video-to-audio **foley** model (HunyuanVideo-Foley / ControlFoley / MMAudio) run on the generated video and guided by the VLM sound cues. Either layer can be switched off; with both off the output is silent. |
 | 10 | **Automatic QA instead of human review.** | A VLM compares each generated chunk with the original shot description (motion, gestures, emotion, any visible text) and scores style similarity to the approved keyframe. Chunks that fail are retried with a new seed or a sharper prompt. |
 
 ---
@@ -42,7 +43,6 @@ provider interface, so it can run on a **local** GPU (ComfyUI / Python) or a
 ```
             ┌──────────────────────── ANALYZE ────────────────────────┐
 input.mp4 ─►│ probe → shot detect → chunk (~5 s) → boundary keyframes │
-            │ → transcript (WhisperX)                                 │
             └──────────────────────────────┬──────────────────────────┘
                                            ▼
             ┌──────────────────────── DESCRIBE (VLM) ─────────────────┐
@@ -74,11 +74,10 @@ input.mp4 ─►│ probe → shot detect → chunk (~5 s) → boundary keyframe
             └──────────────────────────────┬──────────────────────────┘
                                            ▼
             ┌────────────────────────── AUDIO ────────────────────────┐
-            │ mode=original (default): copy source audio → loudnorm   │
-            │ mode=regenerate | mix (user opt-in), parts selectable:  │
-            │   sfx: foley V2A on generated video (VLM sound cues)    │
-            │   narration: LLM JP script w/ emotion tags → Fish Drama 3│
-            │   bgm (optional) · mix: Demucs keep/drop original stems │
+            │ original audio discarded · no narration                 │
+            │ sfx:   foley V2A on generated video (VLM sound cues)    │
+            │ voice: Fish Drama 3 non-speech vocals (breath, sigh,    │
+            │        "mm~", laugh) placed on VLM emotion beats         │
             │ mix + loudnorm (-14 LUFS) → mux                         │
             └──────────────────────────────┬──────────────────────────┘
                                            ▼
@@ -114,12 +113,9 @@ so it can be inspected or edited, then that chunk alone re-run.
 | QA judge | Qwen-VL + DINOv2 similarity | Gemini / Claude | Motion match, emotion match, visible text, style |
 | Upscale 1080p | SeedVR2 | Topaz / fal video upscale | Only when `output.resolution: 1080p` |
 | Interpolation | RIFE 4.x | — | 16 fps → 24/30 fps |
-| Transcript | WhisperX | Cloud STT | Content source for narration |
-| Narration script | Local LLM (Qwen) | Claude API | JP rewrite + Fish direction tags + per-shot character budget |
-| TTS | Fish Drama 3 (SGLang-Omni, large GPU) or S2-Pro (4B) | Fish API `POST /v1/tts`, header `model: drama-3` | |
+| Voice sounds | Fish Drama 3 (SGLang-Omni, large GPU) or S2-Pro (4B) | Fish API `POST /v1/tts`, header `model: drama-3` | Non-speech only, e.g. `[soft satisfied sigh]`, `[quiet pleased hum]` |
 | Foley | HunyuanVideo-Foley / ControlFoley / MMAudio | fal MMAudio etc. | Prompt = VLM sound cues |
-| Stem split (mix mode) | Demucs / BS-RoFormer | — | Keep kitchen sound, drop original voice/music if wanted |
-| Mix/mux | ffmpeg (copy original track by default; loudnorm, duck under voice) | — | |
+| Mix/mux | ffmpeg (drop source audio, loudnorm) | — | |
 
 ### 2.3 Code layout (planned)
 
@@ -127,6 +123,7 @@ so it can be inspected or edited, then that chunk alone re-run.
 cooking2anime/
   c2a/
     cli.py               # c2a run | approve | resume | rerun --chunk | status
+    web/                 # FastAPI app + static page (GUI on the same engine)
     pipeline.py          # stage graph, caching, resume
     config.py            # pydantic schema for configs/*.yaml
     prompts/             # VLM schema, prompt templates, style presets
@@ -165,6 +162,27 @@ cooking2anime/
   of each other (thanks to the shared boundary keyframes), so cloud backends can run
   them all at once. Locally they go through a single GPU queue.
 
+### 2.5 User interface: pipeline engine + CLI + thin web GUI (not a canvas)
+
+| Option | Good for | Problem for this project |
+|--------|----------|--------------------------|
+| Canvas (ComfyUI node graph) | Tuning one shot, trying models and settings by hand | Has no good way to express "for every shot, for every chunk, retry on QA fail, call cloud APIs, pause for approval". The graph turns into a tangle, and you end up working step by step by hand |
+| CLI only | Automation, batch folders, servers, cron, cloud GPUs | The approval step (choosing a style from images) is awkward in a terminal |
+| **Engine + CLI + web GUI (chosen)** | One Python engine does all the work; the CLI and GUI are two thin front ends on it | — |
+
+- **Engine (`c2a/pipeline.py`)**: stages, caching, resume, provider backends. All the
+  logic lives here.
+- **CLI (`c2a run/approve/resume/rerun`)**: built first. Used for batch runs,
+  servers and scripts.
+- **Web GUI (FastAPI + a simple page, opened at `localhost`)**: upload a video, edit
+  the style prompt, pick the style from the preview grid (the approval gate), watch
+  progress per shot, play chunks, re-run one chunk, download. It calls the same
+  engine, so the GUI and CLI never behave differently.
+- **Canvas stays under the hood**: ComfyUI runs headless as the local engine, and
+  its workflow JSONs in `c2a/workflows/` can be opened on the ComfyUI canvas by
+  power users who want to tune a model setting. The pipeline then uses the tuned
+  workflow automatically.
+
 ---
 
 ## 3. Example config
@@ -190,12 +208,13 @@ one 4090, or minutes with parallel cloud jobs.
 
 | Milestone | Scope | Done when |
 |-----------|-------|-----------|
-| **M0 Skeleton** | CLI, config schema, run folder + manifest/caching, ffmpeg probe/split/concat/mux, provider base classes | `c2a run in.mp4` runs end-to-end with every stage stubbed |
-| **M1 Analyze + Describe** | Shot detection, chunking, boundary keyframes, VLM motion/emotion JSON, prompt builder, WhisperX | `prompts.jsonl` reads like an accurate shot list |
+| **M0 Skeleton** | Pipeline engine + CLI, config schema, run folder + manifest/caching, ffmpeg probe/split/concat/mux, provider base classes | `c2a run in.mp4` runs end-to-end with every stage stubbed |
+| **M1 Analyze + Describe** | Shot detection, chunking, boundary keyframes, VLM motion/emotion/sound-cue JSON, prompt builder | `prompts.jsonl` reads like an accurate shot list |
 | **M2 Preview + gate** | Keyframe restyle via ComfyUI and a cloud backend, style presets, review HTML, `approve`, `style.lock.json` | A person can pick a style in under 2 minutes; no text in the restyled frames |
 | **M3 Generate** | Wan FLF2V workflow + cloud backend, chunk concat, per-chunk rerun | A 30 s test clip with no manual steps and clean joins |
-| **M4 Post + original audio** | RIFE, SeedVR2 for 1080p, grade/LUT/grain, encode presets, exact duration match, original audio muxed (default mode) | 720p and 1080p outputs with the original sound in sync |
-| **M5 Optional audio regeneration** | `regenerate`/`mix` modes: foley V2A, Demucs stems, LLM narration script, Fish Drama 3 (API + local), BGM, loudness mix | User can switch modes and parts in config; final mp4 at -14 LUFS |
+| **M4 Post** | RIFE, SeedVR2 for 1080p, grade/LUT/grain, encode presets, source audio dropped | Silent 720p and 1080p outputs |
+| **M5 Audio** | Foley V2A + Fish Drama 3 voice sounds (API + local), beat placement, loudness mix | Final mp4 with a new synced soundtrack at -14 LUFS |
+| **M5.5 Web GUI** | Local web app on the same engine: upload, style gate, progress, per-chunk rerun | Whole flow usable without the terminal |
 | **M6 QA + scale** | VLM judge + style score, retry policy, final report, parallel cloud jobs, batch folder mode | Unattended batch of 5 videos with a report |
 
 Build M0 → M2 first, to confirm the look before spending GPU time on video.
@@ -212,6 +231,5 @@ Build M0 → M2 first, to confirm the look before spending GPU time on video.
 | Hands/knife distorted | Hand-specific negatives, hand detail in the motion description, retry on QA flag |
 | Food loses appetizing look | `realism` setting + food LoRA, food-specific quality phrases |
 | Long run fails midway | Stage caching + `c2a resume` |
-| Original sound drifts slightly from the regenerated motion | Boundaries are frame-exact; if a chunk drifts noticeably, the QA judge flags it and the chunk is retried, and the user can switch that video to `mix` or `regenerate` |
-| Voice timing does not fit the shots (narration option) | Script per shot with a character budget based on shot length; small time-stretch (≤8%) with ffmpeg `atempo` |
+| Drama 3 vocals sound out of place | Short, quiet, placed only on clear emotion beats; volume set below the foley; layer can be turned off |
 | License / rights | License flag per backend; Fish Community License terms; voice cloning only with consent |
