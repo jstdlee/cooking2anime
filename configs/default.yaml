@@ -56,12 +56,18 @@ post:
   film_grain: 0.15
 
 audio:
+  mode: original             # original (default) | regenerate | mix
+  # original:   keep the source soundtrack as-is (only loudness-normalized)
+  # regenerate: replace it with the parts enabled below
+  # mix:        original sound + the parts enabled below
+  parts: [sfx, narration]    # used only for regenerate | mix; any of: sfx, narration, bgm
+  original_stems:            # mix mode only (Demucs split)
+    keep: [ambience]         # ambience | voice | music
   foley:
     provider: local_hunyuan_foley   # local_hunyuan_foley | local_mmaudio | controlfoley | fal
     prompt_from: sound_cues         # VLM sound cues per shot
     extra_prompt: "kitchen ambience"
   narration:
-    enabled: true
     language: ja
     script_llm: claude       # claude | local_qwen | openai_compat
     tts:
@@ -69,7 +75,7 @@ audio:
       model: drama-3         # drama-3 | s2-pro
       reference_id: null     # Fish voice id (only voices you have rights to)
   bgm:
-    enabled: false
+    provider: null
   loudness_lufs: -14
 
 providers:
