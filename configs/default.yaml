@@ -1,0 +1,87 @@
+# cooking2anime — example pipeline config (schema planned in c2a/config.py)
+
+run:
+  workdir: runs
+  commercial: false          # true => warn on non-commercial models (e.g. ProPainter)
+
+output:
+  resolution: 720p           # 720p | 1080p (1080p adds an upscale stage)
+  fps: 24
+  codec: h264                # h264 | h265
+  crf: 18
+
+analyze:
+  shot_detector: transnetv2  # transnetv2 | pyscenedetect
+  max_chunk_frames: 81       # video model window
+  overlap_frames: 12
+  keyframes_per_shot: 1
+  text_detection: paddleocr
+  logo_detection: true       # static-pixel / temporal-median detector
+  controls: [dwpose, depth, canny]
+  transcribe: true
+
+clean:
+  enabled: true
+  provider: local_minimax    # local_minimax | local_propainter | fal
+  mask_dilate_px: 6
+
+style:
+  preset: shinkai_food       # configs/styles/<preset>.yaml
+  prompt: >
+    Japanese anime cooking scene, cinematic Shinkai-style lighting, painterly
+    background, highly detailed glossy food, shallow depth of field, soft film
+    grain, professional photography composition
+  negative: >
+    text, watermark, logo, subtitles, blurry, deformed hands, extra fingers,
+    low quality, flicker
+  realism: 0.45              # 0 = pure anime, 1 = near-photographic
+  lora: []                   # e.g. [{name: anime_food_v2, weight: 0.8}]
+  preview:
+    sample_keyframes: 4
+    seeds_per_keyframe: 3
+
+stylize:
+  control_strength: 0.8
+  qa:
+    min_style_sim: 0.80
+    min_pose_oks: 0.70
+    max_flicker: 0.05
+    max_retries: 2
+
+post:
+  interpolate: rife
+  upscaler: seedvr2          # used only for 1080p
+  lut: null
+  film_grain: 0.15
+
+audio:
+  keep_original_ambience: true
+  foley:
+    provider: local_hunyuan_foley   # local_hunyuan_foley | local_mmaudio | controlfoley | fal
+    prompt: "sizzling oil, knife on wooden board, boiling water, kitchen ambience"
+  narration:
+    enabled: true
+    language: ja
+    script_llm: claude       # claude | local_qwen | openai_compat
+    tts:
+      provider: fish_api     # fish_api | fish_local
+      model: drama-3         # drama-3 | s2-pro
+      reference_id: null     # Fish voice id (only voices you have rights to)
+  bgm:
+    enabled: false
+  loudness_lufs: -14
+
+providers:
+  comfyui:
+    url: http://127.0.0.1:8188   # can point at a remote GPU box
+  fal:
+    api_key_env: FAL_KEY
+  replicate:
+    api_key_env: REPLICATE_API_TOKEN
+  fish:
+    api_key_env: FISH_API_KEY
+    base_url: https://api.fish.audio
+    local_url: http://127.0.0.1:8080   # SGLang-Omni / fish-speech server
+  llm:
+    anthropic_api_key_env: ANTHROPIC_API_KEY
+    openai_compat_url: http://127.0.0.1:11434/v1
