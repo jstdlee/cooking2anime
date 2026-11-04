@@ -28,11 +28,13 @@ class GoDraw:
         self.proc = subprocess.Popen([str(exe), str(board)], env=env,
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         self._id = 0
+        # The window appears before the document has loaded; its title names the file
+        # once it has, so wait for that rather than for the first window.
         deadline = time.time() + 30
         while time.time() < deadline:
             try:
                 wins = self.call("windows")["windows"]
-                if wins:
+                if wins and board.name in str(wins[0]["title"]):
                     self.window = int(wins[0]["id"])
                     self.title = str(wins[0]["title"])
                     break
@@ -41,7 +43,7 @@ class GoDraw:
             time.sleep(0.2)
         else:
             log = self.close()
-            raise RuntimeError(f"GoDraw did not open a window; its output:\n{log[-2000:]}")
+            raise RuntimeError(f"GoDraw did not open {board.name}; its output:\n{log[-2000:]}")
         self.idle()
 
     def call(self, method: str, params: dict[str, Any] | None = None) -> Any:
