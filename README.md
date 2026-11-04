@@ -1,13 +1,22 @@
 # cooking2anime
 transfer the cooking video to anime styling
 
-Pipeline (fully prompt-driven): input video → shots & keyframes → VLM writes a
-motion/emotion prompt per shot → anime style preview (one human approval) →
-first-last-frame video generation (text/logos excluded by prompt) →
-upscale/finish (720p / 1080p) → original sound removed, new soundtrack
-(foley kitchen sounds + Fish Audio Drama 3 voice sounds, no narration).
+Input a cooking video. Get it back as Japanese anime with the same length, cuts,
+motion, gestures and emotion. It has no text or logos, no narration, and a new
+soundtrack (foley kitchen sounds + Fish Audio Drama 3 voice sounds). 720p or 1080p.
 
-Interface: one Python pipeline engine, driven by a CLI and a local web GUI.
+One human step: approve the style on a **GoDraw** canvas. Everything else is automatic,
+on a local GPU (ComfyUI) or in the cloud (fal + Fish API).
 
-- Design & plan: [docs/DESIGN.md](docs/DESIGN.md)
-- Example config: [configs/default.yaml](configs/default.yaml)
+```
+engine (c2a.core)  ←  CLI (c2a run / watch / approve / rerun …)
+        ↕ runs/<id>/board.tldr
+GoDraw canvas (review, drag ✓ to approve, edit prompt notes)
+```
+
+- Design: [docs/DESIGN.md](docs/DESIGN.md)
+- Development plan: [docs/DEV_PLAN.md](docs/DEV_PLAN.md)
+- Test rules: [docs/TESTING.md](docs/TESTING.md)
+- Default config: [configs/default.yaml](configs/default.yaml)
+
+Status: design phase. Implementation starts with the spikes in DEV_PLAN Phase 0.

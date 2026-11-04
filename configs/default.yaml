@@ -1,27 +1,31 @@
-# cooking2anime — example pipeline config (schema planned in c2a/config.py)
-# Everything is prompt-driven: no text/logo detection, no pose extraction.
+# cooking2anime — default config (validated by c2a/config.py; unknown keys are errors)
+# See docs/DESIGN.md for what each stage does.
 
 run:
   workdir: runs
-  commercial: false
+  commercial: false          # true => refuse providers with commercial_ok=false
+  stack: local               # local | cloud  (the two supported, calibrated stacks)
 
 output:
-  resolution: 720p           # 720p | 1080p (1080p adds an upscale stage)
-  fps: 24
-  codec: h264                # h264 | h265
+  resolution: 720p           # 720p | 1080p (1080p adds the SeedVR2 upscale)
+  fps: 24                    # or "source"
+  codec: h264
   crf: 18
 
 analyze:
-  shot_detector: transnetv2  # transnetv2 | pyscenedetect
-  chunk_seconds: 5           # lower (e.g. 3) for fast actions
+  shot_detector: transnetv2
+  cut_threshold: 0.5
+  gen_fps: 16
+  chunk_frames: [81, 65, 49, 33, 17]   # Wan needs 4n+1; largest that fits is used
 
 describe:
-  vlm: local_qwen_vl         # local_qwen_vl | gemini | claude | openai_compat
-  fields: [subjects, setting, food_state, action_beats, gestures, emotion, camera, sound_cues]
-  ignore_overlays: true      # don't describe on-screen text, logos, watermarks
+  vlm: qwen_vl               # qwen_vl (local) | cloud_vlm
+  sample_fps: 4
+  max_beats: 4
+  ignore_overlays: true      # never describe on-screen text, logos, UI
 
 style:
-  preset: shinkai_food       # configs/styles/<preset>.yaml
+  preset: shinkai_food       # configs/styles/shinkai_food.yaml
   prompt: >
     Japanese anime cooking scene, cinematic Shinkai-style lighting, painterly
     background, highly detailed glossy food, shallow depth of field, soft film
@@ -31,58 +35,63 @@ style:
     text, letters, subtitles, captions, watermark, logo, signature, UI,
     blurry, deformed hands, extra fingers, low quality, flicker
   realism: 0.45              # 0 = pure anime, 1 = near-photographic
-  lora: []                   # e.g. [{name: anime_food_v2, weight: 0.8}]
   preview:
     sample_keyframes: 4
     seeds_per_keyframe: 3
 
 generate:
-  provider: comfyui          # comfyui | fal | replicate
-  model: wan_flf2v_14b       # first-last-frame image-to-video
-  anchor: first_last         # first_last | first_only
-  motion_control: none       # none | pose (fallback only for shots QA keeps flagging)
-  qa:
-    judge: local_qwen_vl
-    min_motion_match: 0.7
-    min_style_sim: 0.80
-    reject_visible_text: true
-    max_retries: 2
+  model: wan_flf2v_14b       # first-last-frame image-to-video, 720p
+  max_retries: 2             # after 2nd retry: simplified beats; then flagged
+
+qa:                          # defaults; `c2a calibrate` writes calibrated values
+  min_style_sim: 0.80
+  min_structure_ssim: 0.35
+  min_boundary_ssim: 0.90
+  min_motion_match: 0.70
+  max_flicker: 0.05
+  max_text_boxes: 0
 
 post:
   interpolate: rife
-  upscaler: seedvr2          # used only for 1080p
+  upscaler: seedvr2          # 1080p only
   lut: null
   film_grain: 0.15
 
-audio:
-  keep_original: false       # source audio is always removed
-  narration: false           # no spoken narration
-  sfx:                       # kitchen sounds (sizzle, chop, boil) from the generated video
+audio:                       # original audio is always removed; no narration
+  sfx:
     enabled: true
-    provider: local_hunyuan_foley   # local_hunyuan_foley | local_mmaudio | controlfoley | fal
-    prompt_from: sound_cues         # VLM sound cues per shot
-    extra_prompt: "kitchen ambience"
+    provider: hunyuan_foley  # local | fal (by run.stack)
+    window_s: 8
+    crossfade_s: 0.5
   voice:                     # Fish Audio Drama 3, non-speech vocal sounds only
     enabled: true
     provider: fish_api       # fish_api | fish_local
-    model: drama-3           # drama-3 | s2-pro
+    model: drama-3
     reference_id: null       # Fish voice id (only voices you have rights to)
-    placement: emotion_beats # breath / sigh / "mm~" / small laugh on VLM emotion beats
-    gain_db: -6              # sits under the foley
-  loudness_lufs: -14         # both layers disabled => silent video
+    min_intensity: 2         # emotion beats with intensity >= this get a sound
+    min_gap_s: 4
+    gain_db: -6
+    word_guard: true         # Whisper must hear 0 words, else retry / drop
+  loudness_lufs: -14
+  true_peak_dbtp: -1         # both layers disabled => no audio track
+
+canvas:
+  app: godraw                # godraw | tldraw (same .tldr file)
+  godraw_commit: null        # pinned commit, set after spike S1
+  board: board.tldr          # runs/<id>/board.tldr
+  write_interval_s: 2
+  thumb_max_px: 512
+  board_budget_mb: 25
 
 providers:
   comfyui:
     url: http://127.0.0.1:8188   # can point at a remote GPU box
   fal:
     api_key_env: FAL_KEY
-  replicate:
-    api_key_env: REPLICATE_API_TOKEN
+    max_parallel: 6
   fish:
     api_key_env: FISH_API_KEY
     base_url: https://api.fish.audio
     local_url: http://127.0.0.1:8080
-  llm:
-    anthropic_api_key_env: ANTHROPIC_API_KEY
-    gemini_api_key_env: GEMINI_API_KEY
-    openai_compat_url: http://127.0.0.1:11434/v1
+  cloud_vlm:
+    api_key_env: GEMINI_API_KEY  # or ANTHROPIC_API_KEY, chosen at M3

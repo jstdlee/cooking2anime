@@ -1,235 +1,332 @@
-# cooking2anime — Pipeline Design & Plan
+# cooking2anime — Design
 
-Goal: take an input cooking video and remake it as Japanese anime with a
-customizable prompt. The output keeps the original's motions, gestures and emotion,
-has a detailed, photographic, professional look, contains no text, logos or
-watermarks, and has **no narration**. The original sound is removed and a new soundtrack
-is made to match the new video (Fish Audio Drama 3 for the people's voice sounds, a foley
-model for the kitchen sounds). Output is 720p or 1080p.
+Related: [DEV_PLAN.md](DEV_PLAN.md) (milestones) · [TESTING.md](TESTING.md) (test rules)
+· [configs/default.yaml](../configs/default.yaml)
 
-**Everything is driven by prompts.**
-- *What it looks like* comes from the style prompt plus a restyled keyframe.
-- *How things move* comes from a **motion prompt** written automatically for each shot
-  by a vision-language model (VLM) that watches the original.
-- *What stays out* (text, logos, watermarks, subtitles) comes from the negative
-  prompt. Nothing is detected or masked.
+## 0. Product in one paragraph
 
-People only take part at **one gate**: they approve the style on a few sample
-keyframes. After that the pipeline runs on its own. Every AI step goes through a
-provider interface, so it can run on a **local** GPU (ComfyUI / Python) or a
-**cloud** API, chosen in config.
+Input: a cooking video. Output: the same video remade as Japanese anime, with the
+same length, cuts and timing, and the same motions, gestures and emotion. It has a
+detailed, photographic finish, contains no text, logos or watermarks, and has **no
+narration**. The original sound is removed and replaced by a new soundtrack: a foley
+model makes the kitchen sounds and Fish Audio **Drama 3** makes short voice sounds
+(breaths, sighs, a pleased "mm~"). Output is 720p or 1080p.
 
----
+Everything is driven by prompts. The person makes **one decision**, approving the style
+on a **GoDraw canvas**. The engine does the rest, on a local GPU or a cloud API.
 
-## 1. Principles
+## 1. Scope: deep, not wide
 
-| # | Decision | Why |
-|---|----------|-----|
-| 1 | **No detection/removal stage for text & logos.** | The output is newly generated from a restyled keyframe plus prompts, never edited from the source pixels. Overlays are left out of the keyframe restyle ("clean image, no text, no logo, no watermark") and blocked again in the video negative prompt. |
-| 2 | **Motion is described in words.** | A VLM watches each shot and writes timed action beats ("0–2 s: right hand slices the scallion in quick strokes; 2–4 s: pushes it aside with the knife, smiles"), gestures, facial emotion and camera movement. That text becomes the video prompt. |
-| 3 | **Anchor every chunk with first + last keyframes.** | A prompt alone produces similar motion, not the same motion. Restyling the original frames at both ends of each ~5 s chunk and using a first-last-frame image-to-video model (Wan FLF2V / Wan 2.x I2V, Kling, Veo…) pins where each motion starts and ends. That gets close to the original without pose control. |
-| 4 | **Chunks share boundary keyframes.** | Chunk *i* ends on keyframe *k(i+1)*, and chunk *i+1* starts on that same keyframe. The joins line up exactly, and style cannot drift, because no chunk is generated from the previous chunk's output. |
-| 5 | **Work per shot.** | Scene detection splits the video at cuts. Each shot gets its own description, and long shots are split into chunks of about 5 s. |
-| 6 | **"Anime" vs "photographic texture" is a setting.** | A style preset (e.g. Shinkai-style lighting, painterly backgrounds, glossy realistic food, shallow depth of field, film grain) plus a `realism` value (0–1) that changes the prompt wording and the LoRA weights. |
-| 7 | **1080p is an upscale step.** | Open video models generate at 720p at most. Generate at 720p, then use a temporally consistent upscaler (SeedVR2 / cloud) and RIFE interpolation to 24/30 fps. |
-| 8 | **Remove the original sound and make a new one; no narration.** | The source audio is thrown away. There is no spoken narration and no script, so no transcript stage. The new soundtrack has two layers, both timed to the *generated* video. |
-| 9 | **Drama 3 for voice sounds, foley for kitchen sounds.** | Fish Audio **Drama 3** (Oct 2026; API or open weights) is a speech model. It makes sounds a *person* makes, such as breaths, sighs, a pleased "mm~", a small laugh or humming, timed to the emotion beats from the VLM. It cannot make sizzling, chopping or boiling, so those come from a video-to-audio **foley** model (HunyuanVideo-Foley / ControlFoley / MMAudio) run on the generated video and guided by the VLM sound cues. Either layer can be switched off; with both off the output is silent. |
-| 10 | **Automatic QA instead of human review.** | A VLM compares each generated chunk with the original shot description (motion, gestures, emotion, any visible text) and scores style similarity to the approved keyframe. Chunks that fail are retried with a new seed or a sharper prompt. |
+The rule for this project: support few cases, and make each one precise and
+measurable.
 
----
+**In scope (v1)**
+- Input: one video file, ≤ 3 min, 16:9 or 9:16, ≥ 480p, any fps (including variable fps).
+  Content: cooking (hands, tools, food, a person who appears now and then).
+- One style preset shipped and tuned (`shinkai_food`), plus a free custom prompt.
+- Two provider stacks, each fully supported, tested and calibrated:
+  - **Local:** ComfyUI (headless) running Qwen-Image-Edit, Wan 2.x FLF2V 14B,
+    SeedVR2 and RIFE, plus Qwen-VL, HunyuanVideo-Foley, and Fish Drama 3 via its API
+    or a local server.
+  - **Cloud:** fal endpoints for the same model families, plus the Fish API.
+- Front ends: **GoDraw canvas** (review and approval) and the **CLI** (everything).
+
+**Out of scope (v1) — written down so it doesn't creep in**
+- Narration, dialogue, lip sync, subtitles.
+- Detecting or removing text, logos or watermarks. They are excluded by the prompt
+  only. A text check exists only as a QA step.
+- Pose, depth or edge control (it may come back later as a fallback, see §9).
+- More vendors (Replicate, Kling, Runway…), more presets, a web GUI, multiplayer.
+- Background music.
 
 ## 2. Architecture
 
 ```
-            ┌──────────────────────── ANALYZE ────────────────────────┐
-input.mp4 ─►│ probe → shot detect → chunk (~5 s) → boundary keyframes │
-            └──────────────────────────────┬──────────────────────────┘
-                                           ▼
-            ┌──────────────────────── DESCRIBE (VLM) ─────────────────┐
-            │ per shot/chunk → JSON: subjects, timed action beats,     │
-            │ hand gestures, facial emotion, camera move, food state,  │
-            │ sound cues (ignores on-screen text/logos)                │
-            └──────────────────────────────┬──────────────────────────┘
-                                           ▼
-            ┌──────────────────────── STYLE PREVIEW ──────────────────┐
-            │ N sample keyframes × K seeds → image edit/restyle        │
-            │ (Qwen-Image-Edit / FLUX Kontext + anime LoRA)            │
-            │ prompt = style + "clean, no text/logo/watermark"         │
-            │ → review page (grid)                                     │
-            └──────────────────────────────┬──────────────────────────┘
-                                           ▼
-                           ★ HUMAN GATE: approve / tweak prompt ★
-                                           ▼
-            ┌──────────────────────── GENERATE (auto) ────────────────┐
-            │ restyle ALL boundary keyframes with locked style         │
-            │ per chunk: FLF2V(first=k_i, last=k_i+1,                  │
-            │            prompt = style + motion description,          │
-            │            negative = text, logo, watermark, ...)        │
-            │ → QA (VLM judge + style sim) → retry if below threshold  │
-            └──────────────────────────────┬──────────────────────────┘
-                                           ▼
-            ┌────────────────────────── POST ─────────────────────────┐
-            │ concat chunks (shared frames dropped) → RIFE interp →   │
-            │ SeedVR2 upscale (1080p only) → grade/LUT + grain        │
-            └──────────────────────────────┬──────────────────────────┘
-                                           ▼
-            ┌────────────────────────── AUDIO ────────────────────────┐
-            │ original audio discarded · no narration                 │
-            │ sfx:   foley V2A on generated video (VLM sound cues)    │
-            │ voice: Fish Drama 3 non-speech vocals (breath, sigh,    │
-            │        "mm~", laugh) placed on VLM emotion beats         │
-            │ mix + loudnorm (-14 LUFS) → mux                         │
-            └──────────────────────────────┬──────────────────────────┘
-                                           ▼
-                                 output_720p.mp4 / output_1080p.mp4
+            ┌──────────────── CLI (c2a) ─────────────────┐      ┌──────── GoDraw canvas ────────┐
+            │ run · watch · approve · rerun · status ·   │      │ native app, opens run.tldr    │
+            │ doctor · calibrate · board                 │      │ reviews, approves, edits notes│
+            └──────────────────┬─────────────────────────┘      └───────────────┬───────────────┘
+                               │ calls                                          │ reads / writes
+                               ▼                                                ▼
+┌───────────────────────────────────── ENGINE (c2a.core) ─────────────────────────────────────────┐
+│ stage graph · manifest (source of truth) · content-hash cache · scheduler · QA/retry           │
+│                                                                                                 │
+│  analyze ─► describe ─► preview ─► [GATE] ─► restyle ─► generate ─► post ─► audio ─► export   │
+│                                                                                                 │
+│ board projector: manifest ──► runs/<id>/board.tldr        board reader: board.tldr ──► inputs  │
+└───────────────────────────────────────────┬─────────────────────────────────────────────────────┘
+                                            │ provider interfaces
+          ┌─────────────────┬───────────────┼──────────────────┬──────────────────┐
+          ▼                 ▼               ▼                  ▼                  ▼
+     VLM (Qwen-VL /     ImageEdit       VideoGen           Foley              VoiceFX
+     cloud VLM)         (Qwen-Edit)     (Wan FLF2V)        (Hunyuan-Foley)    (Fish Drama 3)
+          └─────── local: ComfyUI HTTP/WS API · cloud: fal · Fish API ───────┘
 ```
 
-### 2.1 Prompt assembly (per chunk)
+Three layers, and each has one job:
+
+1. **Engine:** all the logic, with no UI code. Run state lives in
+   `runs/<id>/manifest.json`, and that file is the **only source of truth**.
+2. **CLI:** a thin wrapper around the engine. Anything the canvas can do, the CLI can
+   also do (`c2a approve --pick`), so CI and servers never need the canvas.
+3. **Canvas (GoDraw):** a *view* of the manifest plus an *input surface*. The engine
+   writes the board, and the person edits it. The engine reads back only a few
+   well-defined inputs (§6).
+
+## 3. Stage specifications
+
+Every stage reads only from `runs/<id>/` and writes only into its own folder,
+`runs/<id>/<stage>/`. Its cache key is `sha256(stage version, config subset, input
+hashes)`. Changing a prompt invalidates exactly the chunks that depend on it.
+
+### 3.1 analyze
+- **Probe and normalize.** Convert to constant frame rate at the source's rational fps
+  (e.g. `30000/1001`), keeping the timestamp of every frame. Throw the audio away now;
+  no later stage ever reads it.
+- **Find cuts** with TransNetV2 (threshold 0.5). A cut is a hard boundary: chunks never
+  cross one.
+- **Chunk.** Videos are generated at `gen_fps = 16`. Wan needs a frame count of `4n+1`,
+  so the chunk length `L ∈ {17, 33, 49, 65, 81}` frames (1–5 s). Pick the largest `L`
+  that fits, split shots evenly, and merge a leftover under 17 frames into the previous
+  chunk.
+- **Boundary keyframes** are the source frames at each chunk's start and end time.
+  Neighbouring chunks share their boundary frame. Each keyframe is saved as a PNG, with
+  its source timestamp, in `keyframes.json`.
+- **Timeline invariant:** the sum of chunk durations equals the source duration to
+  within one output frame. Property tests check this (see TESTING.md).
+
+### 3.2 describe (VLM)
+- **Input:** each chunk's source clip, sampled at 4 fps, with timestamps made relative
+  to the chunk start.
+- **Output:** strict JSON matching `c2a/prompts/describe.schema.json`. Invalid JSON is
+  retried twice, then the stage fails loudly:
+  ```json
+  {
+    "subjects": ["person (hands only)", "chef's knife", "green onion", "wooden board"],
+    "setting": "home kitchen, warm window light from left",
+    "food_state": "whole green onions, half sliced",
+    "beats": [
+      {"t0": 0.0, "t1": 2.1, "action": "right hand slices green onion in quick even strokes"},
+      {"t0": 2.1, "t1": 3.4, "action": "knife scrapes slices to the left of the board"}
+    ],
+    "gestures": ["left hand fingertips curled guiding the onion"],
+    "emotion": {"label": "focused", "intensity": 1, "t": 0.0},
+    "camera": "static",
+    "sound_cues": [{"t0": 0.0, "t1": 2.1, "cue": "knife_chop_board"},
+                   {"t0": 2.1, "t1": 3.4, "cue": "knife_scrape"}]
+  }
+  ```
+- **Closed vocabularies keep prompts stable:**
+  - `camera`: static, pan_left, pan_right, tilt_up, tilt_down, push_in, pull_out, handheld.
+  - `emotion.label`: neutral, focused, calm, happy, delighted, surprised, satisfied.
+    `intensity` runs 0–3.
+  - `cue`: about 40 kitchen sound IDs (`sizzle_oil`, `boil_bubbling`, `knife_chop_board`,
+    …) defined in `c2a/prompts/sound_cues.yaml`, each with a foley prompt phrase.
+- **Rules:** at most 4 beats per chunk, and beats must cover the whole chunk without
+  gaps. The VLM is told never to describe on-screen text, logos or UI.
+
+### 3.3 Prompt builder (deterministic)
+```
+positive = style.prompt
+         + scene(subjects, setting, food_state)
+         + beats rendered as "first …, then …, finally …"
+         + gestures + emotion phrase(label, intensity) + camera phrase(camera)
+         + quality suffix (preset)
+negative = preset.negative + style.negative
+```
+- It's a pure function. Its output, along with the template version, is saved per chunk
+  in `prompts.jsonl`.
+- **Token budget:** must stay under Wan's text-encoder limit of 512 tokens, with
+  measured headroom of 15%. To fit, it drops parts in this order: gestures, then the
+  quality suffix, then the setting. Beats and emotion are never dropped.
+- **Overrides:** a per-chunk prompt note on the board (§6) replaces the beats sentence
+  only, so the style always stays in.
+
+### 3.4 preview + gate
+- Pick `N = 4` sample keyframes spread across different shots (farthest-point sampling
+  on CLIP embeddings), and restyle each with `K = 3` seeds.
+- **Image edit prompt:** `style.prompt + style.clean_prompt`, using the edit model's
+  "keep composition" instruction.
+- Results are written to the board (§6). The run moves to `awaiting_approval`.
+- **Approval** writes `style.lock.json`. It records the prompt, negative, LoRA set and
+  weights, model hashes, seed, and the **approved image**. That image becomes the
+  style reference for every later restyle (multi-image edit input).
+
+### 3.5 restyle (all boundary keyframes)
+- Restyle every keyframe with the locked style, using the approved image as reference.
+- **Fixed seed per shot**, so frames within a shot stay consistent.
+- **QA per keyframe:**
+  - Style similarity: DINOv2 cosine to the approved image ≥ `qa.min_style_sim`.
+  - Structure kept: SSIM of the luminance edges vs the source keyframe ≥ 0.35. This
+    catches a restyle that changed the composition.
+  - No text: OCR check (see §7).
+
+  A keyframe that fails is retried with seed + 1, up to `max_retries` times.
+
+### 3.6 generate
+- **Per chunk:** FLF2V with first frame = restyled keyframe *k(i)*, last frame =
+  restyled *k(i+1)*, `L` frames, the chunk's prompt, and the seed from the
+  `(shot, chunk)` hash.
+- **Boundary check:** SSIM of generated frame 0 vs *k(i)* and of frame L−1 vs *k(i+1)*
+  ≥ 0.90. This proves the joins line up.
+- **QA:** motion score from the VLM judge, which compares the generated clip with the
+  chunk's beats (0–1), flicker (RAFT-warped frame error), the text check, and style
+  similarity. Failing chunks are retried with a new seed. After the second retry the
+  stage rewrites the beats into simpler wording. A chunk that still fails is marked
+  `flagged` (red on the board) and the run carries on.
+- **Scheduling:** chunks don't depend on each other, so locally they run through one
+  queue of GPU jobs and in the cloud up to `cloud.max_parallel` run at once.
+
+### 3.7 post
+- Join chunks, dropping the duplicate boundary frame.
+- RIFE retime from 16 fps to the output fps (24, or the source fps), so the total frame
+  count matches the source duration exactly.
+- 1080p only: SeedVR2 upscale.
+- Grade/LUT, then film grain.
+- Encode H.264 High, yuv420p, CRF 18, `+faststart`, at 1280×720 or 1920×1080
+  (720×1280 or 1080×1920 for vertical video).
+
+### 3.8 audio (new soundtrack only)
+- **Foley:** HunyuanVideo-Foley on the *generated* video, one shot at a time (shots
+  over 8 s go in overlapping 8 s windows with 0.5 s crossfades). The prompt is built
+  from the shot's `sound_cues` phrases, with timing.
+- **Voice sounds (Drama 3):** an event is made for each emotion beat with intensity ≥
+  2, at most one every 4 s, and only in shots where a person is visible.
+  - The text is a sound direction only, e.g. `[soft satisfied sigh]` or `[quiet
+    delighted "mm"]`, sent to the Fish API (`model: drama-3`) or a local server.
+  - **Word guard:** run ASR (Whisper) on each clip; if it hears any word, retry, and
+    drop the event after 2 retries.
+  - Placed at beat time `t`, at `voice.gain_db` relative to the foley.
+- **Mix:** integrated loudness −14 LUFS, true peak ≤ −1 dBTP, 48 kHz stereo AAC
+  192 kbps. With both layers disabled, the video has no audio track at all.
+
+### 3.9 export
+`runs/<id>/out/<name>_<res>.mp4` plus `report.json` and `report.html` (metrics for
+each chunk, flagged chunks, timings, cost).
+
+## 4. Provider interfaces
+
+```python
+class VLM(Protocol):        def describe(clip: Path, schema: dict) -> dict
+class ImageEdit(Protocol):  def edit(src: Path, refs: list[Path], prompt: str, neg: str, seed: int) -> Path
+class VideoGen(Protocol):   def flf2v(first: Path, last: Path, frames: int, prompt: str, neg: str, seed: int) -> Path
+class Upscaler(Protocol):   def upscale(video: Path, size: tuple[int, int]) -> Path
+class Interp(Protocol):     def retime(video: Path, n_frames_out: int) -> Path
+class Foley(Protocol):      def foley(video: Path, prompt: str, seed: int) -> Path
+class VoiceFX(Protocol):    def vocal(direction: str, voice_ref: str | None, seed: int) -> Path
+```
+- Every provider declares `name`, `version`, `license`, `commercial_ok` and
+  `deterministic` (whether the same seed gives the same output). The engine refuses to
+  run a `commercial_ok=False` provider when `run.commercial: true`.
+- **ComfyUI backend:** loads an API-format workflow JSON from `c2a/workflows/`, patches
+  the nodes listed in its sidecar `*.bindings.yaml` (node ID → parameter), queues it,
+  follows progress over the WebSocket, and downloads the outputs. Workflows can be
+  tuned on the ComfyUI canvas and dropped back in. The binding file is the contract,
+  and CI checks it.
+- **Fake backends** (`providers/fake.py`) are deterministic and CPU-only. Example:
+  `FakeVideoGen` cross-fades from first to last with exactly `frames` frames. They let
+  the whole pipeline run in CI.
+
+## 5. Run state & CLI
 
 ```
-positive = [style preset prompt]
-         + [scene: subjects, setting, food state]        ← VLM
-         + [motion beats with timing + gestures]          ← VLM
-         + [facial emotion / mood]                        ← VLM
-         + [camera: static / slow push-in / pan left]     ← VLM
-         + [quality: detailed texture, cinematic lighting, professional photography]
-negative = text, letters, subtitles, captions, watermark, logo, signature, UI,
-           blurry, deformed hands, extra fingers, flicker, low quality
+c2a doctor                      # GPU/VRAM, ComfyUI reachable, models present + hashes, API keys, ffmpeg
+c2a run in.mp4 [-c cfg.yaml]    # runs to the gate, writes board, prints board path
+c2a board open <run>            # opens runs/<id>/board.tldr in GoDraw (fallback: prints path)
+c2a watch <run>                 # watches board.tldr; applies approval/overrides; resumes automatically
+c2a approve <run> --pick 2:1    # headless approval: sample 2, seed 1
+c2a rerun <run> --chunk 3.2     # re-run one chunk (e.g. after editing its note)
+c2a status <run> [--json]
+c2a calibrate --golden data/golden   # recompute QA thresholds on the golden set
 ```
+Run states: `created → analyzing → describing → previewing → awaiting_approval →
+generating → post → audio → done | failed`. Every change of state is written to the
+manifest atomically (temp file + `rename`).
 
-The VLM gets a fixed JSON schema, and the prompt builder is a template, so the
-output is reproducible. Users can add their own text in `style.prompt` and
-`style.negative`. For each chunk, the resolved prompt is saved in `prompts.jsonl`
-so it can be inspected or edited, then that chunk alone re-run.
+## 6. GoDraw canvas integration
 
-### 2.2 Stage details & recommended models (Nov 2026)
+**Why GoDraw:** [`egoist/godraw`](https://github.com/egoist/godraw) is a native,
+local whiteboard (Go, no web view) that reads and writes tldraw `.tldr` files and
+**picks up changes other apps make to the file**. So the file is a clean contract: the
+engine writes `board.tldr`, the person works in GoDraw, and the engine watches the file.
+Because the format is tldraw's open schema, the same board also opens in tldraw. That
+gives a fallback, and a validator for CI.
 
-| Stage | Local (default) | Cloud alternative | Notes |
-|-------|-----------------|-------------------|-------|
-| Shot detection | TransNetV2 / PySceneDetect | — | Chunks ≤ 81 frames at 16 fps (~5 s) |
-| Motion/scene description | Qwen-VL (video input) | Gemini / Claude / GPT (video or frame sequence) | Strict JSON schema, told to ignore overlays |
-| Keyframe restyle | Qwen-Image-Edit or FLUX.1 Kontext + anime/food LoRA via ComfyUI | fal Kontext / Qwen-Edit, Gemini/GPT image edit | Seed, LoRA and prompt locked after approval |
-| Video generation | Wan 2.x FLF2V / I2V 14B (fp8/GGUF) via ComfyUI | fal / Replicate Wan, Kling, Veo, Seedance (first-last-frame modes) | 720p |
-| QA judge | Qwen-VL + DINOv2 similarity | Gemini / Claude | Motion match, emotion match, visible text, style |
-| Upscale 1080p | SeedVR2 | Topaz / fal video upscale | Only when `output.resolution: 1080p` |
-| Interpolation | RIFE 4.x | — | 16 fps → 24/30 fps |
-| Voice sounds | Fish Drama 3 (SGLang-Omni, large GPU) or S2-Pro (4B) | Fish API `POST /v1/tts`, header `model: drama-3` | Non-speech only, e.g. `[soft satisfied sigh]`, `[quiet pleased hum]` |
-| Foley | HunyuanVideo-Foley / ControlFoley / MMAudio | fal MMAudio etc. | Prompt = VLM sound cues |
-| Mix/mux | ffmpeg (drop source audio, loudnorm) | — | |
+**Caveats to check before depending on it (spike S1 in the dev plan):**
+- The repository declares no license, so we never vendor or fork its code. We use it
+  only as a separate app the user installs, at a pinned commit.
+- It is days old. Format and app behaviour may change, so pin the commit and keep
+  contract tests on `.tldr`.
+- The packaging is macOS-first, so Linux and Windows support must be checked.
+- It has no video playback (videos show as labelled boxes). The board therefore shows
+  **frame strips** (first, middle and last frame, plus a 2 fps strip) and a path to the
+  mp4.
+- How assets are stored (data URL vs file path) must be checked. The default plan is
+  small JPEG thumbnails (≤ 512 px, about 40 KB) as data URLs, with a budget of about
+  25 MB per board.
 
-### 2.3 Code layout (planned)
+**Board layout (one `.tldr`, three pages)**
 
-```
-cooking2anime/
-  c2a/
-    cli.py               # c2a run | approve | resume | rerun --chunk | status
-    web/                 # FastAPI app + static page (GUI on the same engine)
-    pipeline.py          # stage graph, caching, resume
-    config.py            # pydantic schema for configs/*.yaml
-    prompts/             # VLM schema, prompt templates, style presets
-    stages/
-      analyze.py  describe.py  preview.py  generate.py  post.py  audio.py  qa.py
-    providers/           # one interface per capability, many backends
-      base.py            # VLM, ImageStylizer, VideoGenerator, TTS, Foley, Upscaler, LLM
-      comfyui.py         # local: queues workflow JSON via ComfyUI HTTP/WebSocket API
-      fal.py  replicate.py  fish.py  anthropic.py  openai_compat.py
-    workflows/           # ComfyUI API-format workflow JSONs
-    review/              # static HTML review page for the approval gate
-  configs/
-    default.yaml
-    styles/*.yaml
-  runs/<run_id>/         # artifacts + manifest.json (git-ignored)
-```
+| Page | Engine writes | Person can do |
+|------|---------------|---------------|
+| `1 · Style gate` | One frame per sample keyframe with K candidate images; a `STYLE PROMPT` note; a `✓ APPROVE` sticker note | Edit the prompt note (a new preview runs); **drag the ✓ sticker into a candidate frame** to approve |
+| `2 · Shots` | Per chunk: a frame with a restyled first/last keyframe, a frame strip, metrics, a status colour (grey queued, yellow running, green pass, red flagged); a `PROMPT` note per chunk | Edit a chunk's prompt note; put a `↻` sticker on a chunk to re-run it |
+| `3 · Report` | Summary numbers, list of flagged chunks, output paths | — |
 
-### 2.4 Key design decisions
+**Ownership rules (how both sides write the same file safely)**
+- Each record the engine creates has `meta.c2a = {owner: "engine", key: "<stable
+  id>", rev: n}`. Notes and stickers the person can edit have `owner: "user-input"`.
+  Everything else (the person's own drawings) belongs to the person and is never
+  touched.
+- **Engine write** = read the file → replace only `owner=engine` records, matched by
+  `key` → keep everything else byte-for-byte → write to a temp file → `rename`. If the
+  file's hash changed between read and write, start again (optimistic locking).
+  Writes are batched at most once every 2 s.
+- **Engine read** takes only these inputs:
+  1. Approval: the sticker's `parentId` is a candidate frame.
+  2. Prompt note text, if it differs from the last value the engine wrote.
+  3. Re-run stickers.
 
-- **Stages are pure functions over files.** Each stage writes to `runs/<id>/<stage>/`
-  and records the input hash in `manifest.json`. Re-running skips anything already
-  done, a crash resumes where it stopped, and editing a prompt only re-runs the
-  chunks that depend on it.
-- **One interface per capability.** For example, `VideoGenerator.generate(first, last,
-  prompt, negative, frames, seed) -> video`. Backends are chosen in config, so moving
-  a stage between local and cloud is a one-line change. `comfyui.url` can point at a
-  remote GPU box.
-- **The ComfyUI API is the local engine.** The pipeline patches node values in a
-  workflow JSON template, queues the job and downloads the outputs. No manual
-  clicking.
-- **Human gate = a pause between stages.** `c2a run` stops with status
-  `awaiting_approval` and writes `review/index.html`. The person picks a style with
-  `c2a approve <run> --pick N` (or edits the prompt and reruns the preview), and
-  everything after that runs unattended.
-- **Parallel work.** Restyling the keyframes and generating the chunks are independent
-  of each other (thanks to the shared boundary keyframes), so cloud backends can run
-  them all at once. Locally they go through a single GPU queue.
+  Each input is checked and copied into the manifest with the board hash, then shown on
+  the board as handled (the sticker turns green).
+- **The board is rebuildable.** If GoDraw overwrites a status record with an older copy,
+  the next projection puts it back. Losing the board never loses state, and `c2a board
+  rebuild` makes it again from the manifest.
 
-### 2.5 User interface: pipeline engine + CLI + thin web GUI (not a canvas)
+## 7. Quality gates (measured, not eyeballed)
 
-| Option | Good for | Problem for this project |
-|--------|----------|--------------------------|
-| Canvas (ComfyUI node graph) | Tuning one shot, trying models and settings by hand | Has no good way to express "for every shot, for every chunk, retry on QA fail, call cloud APIs, pause for approval". The graph turns into a tangle, and you end up working step by step by hand |
-| CLI only | Automation, batch folders, servers, cron, cloud GPUs | The approval step (choosing a style from images) is awkward in a terminal |
-| **Engine + CLI + web GUI (chosen)** | One Python engine does all the work; the CLI and GUI are two thin front ends on it | — |
+| Metric | Where | How | Default threshold |
+|--------|-------|-----|-------------------|
+| Style similarity | restyle, generate | DINOv2-L cosine to approved image | ≥ 0.80 (calibrated) |
+| Structure kept | restyle | Edge-map SSIM vs source keyframe | ≥ 0.35 |
+| Boundary match | generate | SSIM of first/last generated frames vs keyframes | ≥ 0.90 |
+| Motion match | generate | VLM judge: beats vs generated clip, 0–1 | ≥ 0.70 |
+| Flicker | generate, post | RAFT-warped L1 between frames | ≤ 0.05 |
+| No text | restyle, generate, export | PaddleOCR on 1 fps samples, conf ≥ 0.6 | 0 boxes |
+| Duration | export | `|out − src|` | ≤ 1 output frame |
+| No words in voice | audio | Whisper word count | 0 |
+| Loudness | export | EBU R128 | −14 ± 1 LUFS, TP ≤ −1 dBTP |
 
-- **Engine (`c2a/pipeline.py`)**: stages, caching, resume, provider backends. All the
-  logic lives here.
-- **CLI (`c2a run/approve/resume/rerun`)**: built first. Used for batch runs,
-  servers and scripts.
-- **Web GUI (FastAPI + a simple page, opened at `localhost`)**: upload a video, edit
-  the style prompt, pick the style from the preview grid (the approval gate), watch
-  progress per shot, play chunks, re-run one chunk, download. It calls the same
-  engine, so the GUI and CLI never behave differently.
-- **Canvas stays under the hood**: ComfyUI runs headless as the local engine, and
-  its workflow JSONs in `c2a/workflows/` can be opened on the ComfyUI canvas by
-  power users who want to tune a model setting. The pipeline then uses the tuned
-  workflow automatically.
+`c2a calibrate` sets thresholds from the golden set (§TESTING): each threshold is the
+5th percentile of the passing human-rated samples.
 
----
+## 8. Hardware & cost (rough)
 
-## 3. Example config
+| Setup | Notes |
+|-------|-------|
+| 24 GB GPU (RTX 4090) | Wan FLF2V 14B fp8 at 720p takes several minutes per 5 s chunk; voice through the Fish API |
+| 48–80 GB | Faster; Drama 3 can also run locally (SGLang-Omni) |
+| Cloud | Everything on fal + the Fish API; chunks run in parallel; the gate keeps spend low before generation |
 
-See [`configs/default.yaml`](../configs/default.yaml).
+A 60 s video is about 12–15 chunks of 5 s each. Expect 1–3 h on a single 4090.
 
----
-
-## 4. Hardware & cost guide (rough)
-
-| Setup | What runs locally | Notes |
-|-------|-------------------|-------|
-| 24 GB GPU (RTX 4090) | Wan 14B FLF2V fp8/GGUF at 720p (several minutes per 5 s chunk), Kontext/Qwen-Edit, a 7B-class VLM, MMAudio | Fish API for voice, or S2-Pro locally |
-| 32 GB+ / 48–80 GB | Same, faster; larger VLM; Drama 3 locally | |
-| Cloud only | All stages via fal/Replicate + a VLM API + Fish API | Cost scales with seconds of video; the preview gate keeps spend low before the expensive stage |
-
-A 60 s video is about 12–15 chunks of 5 s each, plus retries. Plan for 1–3 hours on
-one 4090, or minutes with parallel cloud jobs.
-
----
-
-## 5. Implementation plan
-
-| Milestone | Scope | Done when |
-|-----------|-------|-----------|
-| **M0 Skeleton** | Pipeline engine + CLI, config schema, run folder + manifest/caching, ffmpeg probe/split/concat/mux, provider base classes | `c2a run in.mp4` runs end-to-end with every stage stubbed |
-| **M1 Analyze + Describe** | Shot detection, chunking, boundary keyframes, VLM motion/emotion/sound-cue JSON, prompt builder | `prompts.jsonl` reads like an accurate shot list |
-| **M2 Preview + gate** | Keyframe restyle via ComfyUI and a cloud backend, style presets, review HTML, `approve`, `style.lock.json` | A person can pick a style in under 2 minutes; no text in the restyled frames |
-| **M3 Generate** | Wan FLF2V workflow + cloud backend, chunk concat, per-chunk rerun | A 30 s test clip with no manual steps and clean joins |
-| **M4 Post** | RIFE, SeedVR2 for 1080p, grade/LUT/grain, encode presets, source audio dropped | Silent 720p and 1080p outputs |
-| **M5 Audio** | Foley V2A + Fish Drama 3 voice sounds (API + local), beat placement, loudness mix | Final mp4 with a new synced soundtrack at -14 LUFS |
-| **M5.5 Web GUI** | Local web app on the same engine: upload, style gate, progress, per-chunk rerun | Whole flow usable without the terminal |
-| **M6 QA + scale** | VLM judge + style score, retry policy, final report, parallel cloud jobs, batch folder mode | Unattended batch of 5 videos with a report |
-
-Build M0 → M2 first, to confirm the look before spending GPU time on video.
-
----
-
-## 6. Risks & mitigations
+## 9. Risks
 
 | Risk | Mitigation |
 |------|------------|
-| Motion differs from the original (prompt is looser than pose control) | First+last keyframe anchors, timed action beats in the prompt, shorter chunks (e.g. 3 s) for fast actions; optional `motion_control: pose` fallback on shots QA flags repeatedly |
-| Text/logo leaks into the restyled keyframe | Strong clean-image wording in the edit prompt + negative prompt; QA judge flags visible text and retries that keyframe |
-| Flicker / style drift | Every chunk is anchored on restyled keyframes that share the locked style; temporal upscaler; color match on concat |
-| Hands/knife distorted | Hand-specific negatives, hand detail in the motion description, retry on QA flag |
-| Food loses appetizing look | `realism` setting + food LoRA, food-specific quality phrases |
-| Long run fails midway | Stage caching + `c2a resume` |
-| Drama 3 vocals sound out of place | Short, quiet, placed only on clear emotion beats; volume set below the foley; layer can be turned off |
-| License / rights | License flag per backend; Fish Community License terms; voice cloning only with consent |
+| Motion differs from the source | First+last anchors, timed beats, shorter chunks on QA fail; pose-control fallback is a v2 item |
+| Text leaks in | Clean-image prompt + negative prompt; OCR gate with retry |
+| GoDraw changes / unclear license / platform | Plain `.tldr` contract with tldraw-schema validation; tldraw as fallback viewer; CLI `approve` always works |
+| Drama 3 speaks real words | Whisper word guard, then drop the event |
+| Concurrent board edits | Ownership rules, optimistic write, board rebuildable from the manifest |
+| Licenses | `commercial_ok` per provider; Fish Community License terms; voice refs only with consent |
