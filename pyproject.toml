@@ -1,0 +1,67 @@
+[project]
+name = "cooking2anime"
+version = "0.1.0"
+description = "Remake cooking videos as Japanese anime: prompt-driven, one human approval on a GoDraw canvas."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7,<3",
+    "pyyaml>=6",
+    "numpy>=1.26",
+    "pillow>=10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "pytest-socket>=0.7",
+    "hypothesis>=6.100",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML",
+    "pyinstaller>=6.10",
+]
+
+[project.scripts]
+c2a = "c2a.cli:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["c2a*"]
+
+[tool.setuptools.package-data]
+c2a = ["board/*.json", "prompts/*.json", "prompts/*.yaml", "styles/*.yaml"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003", "RUF007"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["c2a"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["PIL.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "--disable-socket --allow-unix-socket -ra"
+testpaths = ["tests"]
+markers = [
+    "gpu: needs a GPU and real models (nightly only)",
+    "godraw: needs a built GoDraw binary and a display",
+]
+
+[tool.coverage.run]
+source = ["c2a"]
+branch = true

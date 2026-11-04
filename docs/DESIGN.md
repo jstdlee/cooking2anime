@@ -83,7 +83,9 @@ hashes)`. Changing a prompt invalidates exactly the chunks that depend on it.
 - **Probe and normalize.** Convert to constant frame rate at the source's rational fps
   (e.g. `30000/1001`), keeping the timestamp of every frame. Throw the audio away now;
   no later stage ever reads it.
-- **Find cuts** with TransNetV2 (threshold 0.5). A cut is a hard boundary: chunks never
+- **Find cuts** with TransNetV2 (threshold 0.5; arrives with the real stack in M3). Until
+  then ffmpeg's scene score is used (threshold 0.3: hard cuts score ~0.4+, motion < 0.1).
+  A cut is a hard boundary: chunks never
   cross one.
 - **Chunk.** Videos are generated at `gen_fps = 16`. Wan needs a frame count of `4n+1`,
   so the chunk length `L ∈ {17, 33, 49, 65, 81}` frames (1–5 s). Pick the largest `L`
@@ -253,16 +255,23 @@ file**. That makes the file a clean contract: the engine writes `board.tldr`, th
 works in GoDraw, and the engine watches the file. The same file also opens in tldraw,
 and CI validates every board against tldraw's schema.
 
-- **Version:** pinned to one GoDraw commit (`canvas.godraw_commit`). `c2a doctor`
-  checks the installed build, and `c2a board open` launches it.
+- **Version:** pinned to one GoDraw commit (`canvas.godraw_commit`). CI builds that
+  commit for Linux (x86_64 and arm64, `CGO_ENABLED=0`; GTK3 is loaded at runtime), and
+  `c2a board open` launches it (`C2A_GODRAW` or `godraw` on PATH).
 - **Video:** not played on the canvas. Every chunk and the final output has a clickable
-  `▶ open` shape whose link points to the mp4 (`file://…`), so it opens in the system
-  player. `c2a open <run> --chunk 3.2` does the same from the CLI. The chunk frame shows
-  restyled first/last keyframes and a small strip of frames, so the board can be
-  scanned without playing anything.
-- **Images:** JPEG thumbnails ≤ 512 px. The asset storage mode (embedded data URL vs
-  file path next to the board) is fixed in spike S1. The budget is about 25 MB per
-  board whichever mode is used.
+  `▶ open` shape. tldraw's schema only allows `http`, `https` and `mailto` links, so the
+  link points to a read-only server on `127.0.0.1:<canvas.server_port>` that `c2a watch`
+  runs (media files only, no directory listing). `c2a open <run> --chunk 3.2` opens the
+  file directly. The chunk frame shows restyled first/last keyframes and a strip of
+  frames, so the board can be scanned without playing anything.
+- **Images:** JPEG thumbnails ≤ 512 px, embedded as data URLs, cached by content hash in
+  `runs/<id>/.thumbs/`. If the board would exceed ~25 MB, thumbnails are halved until
+  it fits.
+- **Verified against the real app** (tests/godraw, every CI run, under Xvfb): GoDraw
+  opens and renders the board; dragging the ✓ note into a candidate and letting GoDraw
+  autosave produces an approval the engine reads; GoDraw's save is still valid tldraw
+  and keeps every engine record and its `meta`; an engine write made while GoDraw is
+  open is picked up and not overwritten by GoDraw's next autosave.
 
 **Board layout (one `.tldr`, three pages)**
 
@@ -286,9 +295,14 @@ and CI validates every board against tldraw's schema.
   2. Prompt note text, if it differs from the last value the engine wrote.
   3. Re-run stickers.
 
-  Each input is checked and copied into the manifest with the board hash, then shown on
-  the board as handled (the sticker turns green).
-- **The board is rebuildable.** If GoDraw autosaves an older copy over a status record with an older copy,
+  Stickers act on *transitions*: dropping one into a frame triggers once, moving it to
+  another frame triggers again. A sticker is "in" a frame if the app re-parented it on
+  drop, or if its centre lies inside the frame (apps that keep page coordinates). A
+  sticker over two frames is ignored with a notice. Each input is checked and copied
+  into the manifest, then shown as handled by engine-owned records (the candidate frame
+  turns green and reads "APPROVED", the status line names the candidate). The engine
+  never edits the person's stickers.
+- **The board is rebuildable.** If GoDraw autosaves an older copy over a status record,
   the next projection puts it back. Losing the board never loses state, and `c2a board
   rebuild` makes it again from the manifest.
 
@@ -308,6 +322,17 @@ and CI validates every board against tldraw's schema.
 
 `c2a calibrate` sets thresholds from the golden set (§TESTING): each threshold is the
 5th percentile of the passing human-rated samples.
+
+**Until the model-based metrics land** (DINOv2 in M4, RAFT in M5) the engine records
+stand-ins named `*_proxy` and does **not** gate on them: `style_sim_proxy` (HSV histogram
+cosine) and `flicker_proxy` (mean per-pixel temporal second difference: 0 for still or
+linear change, high for brightness that jumps back and forth). Boundary SSIM, structure
+SSIM, text count, duration and loudness are exact and do gate.
+
+**Loudness and true peak** are enforced on the delivered file: two-pass `loudnorm`, then
+a numpy true-peak limiter (4× oversampling, look-ahead and smoothing; independent of the
+ffmpeg version), then export measures the encoded AAC and trims the gain if the encoder
+overshot.
 
 ## 8. Hardware & cost (rough)
 

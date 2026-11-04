@@ -1,0 +1,41 @@
+# cue id → foley prompt phrase. The VLM may only use these ids.
+ambience_kitchen: quiet home kitchen room tone
+knife_chop_board: sharp knife chopping on a wooden cutting board
+knife_slice_soft: knife slicing softly through vegetables
+knife_scrape: knife blade scraping chopped food across a wooden board
+knife_mince_fast: fast rhythmic knife mincing on a board
+peel_vegetable: vegetable peeler scraping skin
+crack_egg: egg shell cracking on a bowl rim
+whisk_bowl: whisk beating eggs in a metal bowl
+stir_spoon_pot: wooden spoon stirring in a pot
+stir_chopsticks: chopsticks stirring in a ceramic bowl
+pour_liquid: liquid pouring into a bowl
+pour_oil_pan: oil pouring into a hot pan
+sizzle_oil: food sizzling in hot oil
+sizzle_strong: loud sizzle as food hits a very hot pan
+deep_fry: bubbling deep frying oil
+stir_fry_toss: wok stir fry tossing with sizzling
+pan_on_stove: metal pan placed on a stove grate
+lid_on_pot: pot lid placed on a pot
+lid_off_pot: pot lid lifted off with steam
+boil_bubbling: water boiling and bubbling in a pot
+simmer_gentle: gentle simmering sauce
+steam_hiss: soft steam hiss
+gas_stove_ignite: gas stove clicking and igniting
+grill_sizzle: meat sizzling on a grill
+rice_cooker_open: rice cooker lid clicking open
+rice_scoop: rice paddle scooping steamed rice
+plate_set_down: ceramic plate set down on a wooden table
+bowl_set_down: ceramic bowl set down gently
+utensils_clink: metal utensils clinking
+chopsticks_tap: chopsticks tapping a bowl
+water_tap_run: kitchen tap running water
+wash_vegetables: vegetables being rinsed under running water
+crunch_bite: crunchy bite into fried food
+slurp_noodles: noodles being slurped
+knead_dough: hands kneading dough on a floor-dusted board
+roll_dough: rolling pin pressing dough
+grate_cheese: food grater scraping
+mortar_grind: mortar and pestle grinding spices
+package_rustle: plastic packaging rustling
+fridge_door: refrigerator door opening and closing

@@ -1,0 +1,120 @@
+name: build linux-arm64
+
+# Builds release artifacts for linux/arm64 (e.g. NVIDIA DGX Spark / Jetson / Graviton):
+#   - c2a-<version>-linux-arm64.tar.gz : self-contained CLI (PyInstaller), smoke-tested
+#   - godraw-linux-arm64               : GoDraw canvas at the pinned commit
+#   - cooking2anime-<version>-py3-none-any.whl
+# The c2a binary is built natively when the repository variable ARM64_RUNNER names an
+# arm64 runner; otherwise inside an arm64 container under QEMU on an x86 runner.
+# On a `v*` tag the artifacts are attached to a GitHub release.
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  GODRAW_COMMIT: 03717388cddebd320b4d4949011340e74c9091cf  # keep in sync with configs/default.yaml
+
+jobs:
+  c2a:
+    name: c2a binary (linux-arm64)
+    runs-on: ${{ vars.ARM64_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Native arm64 build
+        if: runner.arch == 'ARM64'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+          packaging/build_binary.sh dist
+
+      - name: Set up QEMU
+        if: runner.arch != 'ARM64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Emulated arm64 build (Debian bullseye, glibc 2.31)
+        if: runner.arch != 'ARM64'
+        run: |
+          docker run --rm --platform linux/arm64 -v "$PWD:/src" -w /src \
+            python:3.12-slim-bullseye bash -euo pipefail -c '
+              apt-get update -qq
+              apt-get install -y -qq ffmpeg binutils >/dev/null
+              packaging/build_binary.sh dist
+              chown -R '"$(id -u):$(id -g)"' dist'
+
+      - name: Check architecture
+        run: |
+          ls -la dist
+          tar -xzf dist/c2a-*-linux-arm64.tar.gz -C "$RUNNER_TEMP"
+          file "$RUNNER_TEMP"/c2a-*-linux-arm64/c2a | tee /dev/stderr | grep -q "ARM aarch64"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c2a-linux-arm64
+          path: dist/c2a-*-linux-arm64.tar.gz*
+          if-no-files-found: error
+
+  godraw:
+    name: GoDraw (linux-arm64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+      - name: Cross-compile pinned GoDraw
+        env:
+          GOTOOLCHAIN: auto
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: "0"
+        run: |
+          git clone -q https://github.com/egoist/godraw.git godraw
+          git -C godraw checkout -q "$GODRAW_COMMIT"
+          mkdir -p dist
+          (cd godraw && go build -trimpath -ldflags "-s -w" -o ../dist/godraw-linux-arm64 .)
+          (cd godraw && go build -trimpath -tags e2e -o ../dist/godraw-e2e-linux-arm64 .)
+          file dist/godraw-linux-arm64 | grep -q "ARM aarch64"
+          (cd dist && sha256sum godraw-* > godraw-linux-arm64.sha256)
+          echo "GoDraw $GODRAW_COMMIT" > dist/GODRAW_VERSION
+      - uses: actions/upload-artifact@v4
+        with:
+          name: godraw-linux-arm64
+          path: dist/*
+          if-no-files-found: error
+
+  wheel:
+    name: wheel
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build && python -m build --wheel --outdir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: dist/*.whl
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [c2a, godraw, wheel]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --generate-notes

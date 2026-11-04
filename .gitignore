@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+.coverage
+coverage.json
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+build/
+dist/
+*.egg-info/
+runs/
+tools/tldr-validate/node_modules/

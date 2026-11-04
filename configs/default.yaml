@@ -77,11 +77,12 @@ audio:                       # original audio is always removed; no narration
 
 canvas:
   app: godraw                # native canvas (macOS / Linux / Windows)
-  godraw_commit: null        # pinned commit, checked by `c2a doctor`
+  godraw_commit: "03717388cddebd320b4d4949011340e74c9091cf"  # pinned egoist/godraw commit
   board: board.tldr          # runs/<id>/board.tldr
   write_interval_s: 2
   thumb_max_px: 512
   board_budget_mb: 25
+  server_port: 8765          # `c2a watch` serves clips here for the ▶ open links
 
 providers:
   comfyui:

@@ -24,7 +24,7 @@ These rules are binding. A PR that breaks one does not merge.
    only blocks nightly; it must be fixed or deleted within one week.
 3. **Every bug fix comes with a regression test** that fails before the fix. The PR
    template has a checkbox for it.
-4. **Coverage gates:** `c2a/core`, `c2a/board` and `c2a/prompts` ≥ 90% line and 85%
+4. **Coverage gates** (`tools/coverage_gate.py`, run in CI): `c2a/core`, `c2a/board` and `c2a/prompts` ≥ 90% line and 85%
    branch; the whole repo ≥ 80%. A PR may not lower coverage of a file it touches.
 5. **Types and lint:** `mypy --strict` and `ruff` pass with zero ignores added unless
    a reason is given inline.
@@ -66,7 +66,7 @@ These rules are binding. A PR that breaks one does not merge.
 ### Board (`board/*`)
 - Every produced board passes `tools/tldr-validate` (pinned `@tldraw/tlschema`).
 - Property: with random user records (shapes, arrows, notes, pages) mixed in, 100
-  projector writes leave every non-engine record **byte-for-byte unchanged**.
+  projector writes leave every non-engine record **unchanged (JSON-equal)**.
 - Optimistic write: if the file changes between read and write, the engine retries,
   and the user's change survives.
 - Reader: sticker inside a candidate frame → approval; sticker on the page or in a
@@ -78,7 +78,8 @@ These rules are binding. A PR that breaks one does not merge.
   the automation socket → approval within 3 s; edit a prompt note → override recorded;
   engine status writes are picked up while the app is open. A macOS and Windows manual
   checklist is signed off once per release.
-- `▶ open` links: every link on the board points to an existing mp4 in the run folder.
+- `▶ open` links point at the local clip server, which serves only media files from the
+  run folder (no listing, no `..`).
 
 ### Providers
 - Contract test per backend: request shape, auth header, retry on 429/5xx with
