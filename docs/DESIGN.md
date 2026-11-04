@@ -1,4 +1,8 @@
-# cooking2anime — Design
+# cooking2anime — Design (v1)
+
+> **v1, shipped as v0.1.0.** [DESIGN_V2.md](DESIGN_V2.md) proposes the next version: one
+> Studio app (tldraw canvas + engine), key images instead of fixed chunks, layered style
+> presets, and a keep-voice audio option. Its §9 lists which sections below it replaces.
 
 Related: [DEV_PLAN.md](DEV_PLAN.md) (milestones) · [TESTING.md](TESTING.md) (test rules)
 · [configs/default.yaml](../configs/default.yaml)

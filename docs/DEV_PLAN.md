@@ -240,3 +240,26 @@ tests/         unit/ property/ contract/ integration/ board/ gpu/ golden/ fixtur
 tools/         tldr-validate/  (node, pinned @tldraw/tlschema)
 docs/          DESIGN.md DEV_PLAN.md TESTING.md decisions/
 ```
+
+---
+
+## v2 plan: Studio, key images, presets, keep-voice ([DESIGN_V2.md](DESIGN_V2.md))
+
+Same rules as above: deep before wide, a walking skeleton first, tests and a demo with
+every milestone. Estimates assume one developer. Fake providers keep CI GPU-free; the
+real models (M3–M8 above) slot in behind the same interfaces and are not repeated here.
+
+| Milestone | Scope | Done when |
+|-----------|-------|-----------|
+| **S6 Spike (2 d)** | tldraw SDK in a Vite app with three custom shapes (key-image card with checkbox, `<video>` clip card, button); license-key handling; build size; works in Chromium on arm64 | ADR-006 + a demo page |
+| **V1 Studio skeleton (1 wk)** | `c2a studio` (FastAPI + uvicorn), token auth, WebSocket command/diff protocol, media server with Range, frontend bundled into the package and the arm64 tarball; Doctor panel; New run (upload) | Upload a fixture in the browser and see the v1 pipeline's board live; Playwright e2e in CI |
+| **V2 Key images (1.5 wk)** | `keys` (cuts + flow/embedding change points + sharpest frame + coverage) and `tag` (VLM, cooking-verb vocabulary, importance, auto-check); fake VLM for CI | Synthetic fixture: candidates within ±2 frames of the known changes; property tests for gaps/coverage |
+| **V3 Key gate on canvas (1 wk)** | Key strip shape: check/uncheck, locked shot starts, tag editing, "+ key here" scrubber, live clip-count/output-length counter | Playwright: uncheck → segment merges; add key → tagged and checked |
+| **V4 Segments + clips (1 wk)** | Variable-length segments, `match`/`fixed`/`per_clip` modes, I2V/FLF2V per segment with end anchor, inline clip cards with ▶, per-clip re-run | Property tests: output length = sum of clips; no clip crosses a cut; e2e plays a clip inline |
+| **V5 Style presets (1 wk)** | Layered YAML presets (6 × animation, director-inspired, finish), deterministic composition + token budget, preset picker + prompt card, sample grid, approval | Snapshot per combination; `camera_bias` enforced; e2e picks presets and approves |
+| **V6 Keep-voice (1.5 wk)** | Voice-stem separation, VAD + word timestamps, phrase→clip mapping, stretch/cut/pad rules, ducking, clip-card warnings | Synthetic phrases land within 10 ms of key offsets; cut-at-word rule; loudness contract holds |
+| **V7 CLI parity + release (0.5 wk)** | `c2a keys/clips/style` commands mirroring every Studio action; docs; GoDraw removed from release assets; v0.2.0 | Every Studio command has a CLI test calling the same engine function; release published |
+
+Total ≈ 8 weeks on fakes. Each real model from M3–M8 then plugs in per stage. The v1
+pieces that carry over unchanged: manifest/cache, provider interfaces, QA metrics, the
+true-peak limiter, the output contract, the CI layout and the arm64 build.

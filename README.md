@@ -59,6 +59,7 @@ otherwise in an arm64 container under QEMU. Tags `v*` publish a GitHub release.
 ## Docs
 
 - Design: [docs/DESIGN.md](docs/DESIGN.md)
+- Next version (proposed): [docs/DESIGN_V2.md](docs/DESIGN_V2.md): one Studio app, key images, style presets, keep-voice
 - Development plan + status: [docs/DEV_PLAN.md](docs/DEV_PLAN.md)
 - Test rules: [docs/TESTING.md](docs/TESTING.md)
 
