@@ -47,9 +47,9 @@ Config: [configs/default.yaml](configs/default.yaml), overridable with
 
 The `build linux-arm64` workflow produces, for linux/arm64:
 
-- `c2a-<version>-linux-arm64.tar.gz`: self-contained CLI (PyInstaller, built on Debian
-  bullseye so it runs on glibc ≥ 2.31, e.g. Ubuntu 20.04+, DGX OS, Jetson). Needs
-  `ffmpeg` on the target.
+- `c2a-<version>-linux-arm64.tar.gz`: self-contained CLI (PyInstaller, built on Ubuntu
+  22.04 so it runs on glibc ≥ 2.35, e.g. Ubuntu 22.04+, DGX OS, Jetson JetPack 6).
+  Needs `ffmpeg` on the target.
 - `godraw-linux-arm64`: GoDraw at the pinned commit (needs GTK3 on the target).
 - `cooking2anime-<version>-py3-none-any.whl`.
 

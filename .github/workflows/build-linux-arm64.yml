@@ -5,7 +5,7 @@ name: build linux-arm64
 #   - godraw-linux-arm64               : GoDraw canvas at the pinned commit
 #   - cooking2anime-<version>-py3-none-any.whl
 # The c2a binary is built natively when the repository variable ARM64_RUNNER names an
-# arm64 runner; otherwise inside an arm64 container under QEMU on an x86 runner.
+# arm64 runner; otherwise inside an arm64 Ubuntu 22.04 container under QEMU on an x86 runner.
 # On a `v*` tag the artifacts are attached to a GitHub release.
 
 on:
@@ -25,6 +25,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        if: runner.arch == 'ARM64'
+        with:
+          python-version: "3.12"
+
       - name: Native arm64 build
         if: runner.arch == 'ARM64'
         run: |
@@ -37,13 +42,18 @@ jobs:
         with:
           platforms: arm64
 
-      - name: Emulated arm64 build (Debian bullseye, glibc 2.31)
+      - name: Emulated arm64 build (Ubuntu 22.04, glibc 2.35)
         if: runner.arch != 'ARM64'
         run: |
           docker run --rm --platform linux/arm64 -v "$PWD:/src" -w /src \
-            python:3.12-slim-bullseye bash -euo pipefail -c '
+            -e DEBIAN_FRONTEND=noninteractive ubuntu:22.04 bash -euo pipefail -c '
               apt-get update -qq
-              apt-get install -y -qq ffmpeg binutils >/dev/null
+              apt-get install -y -qq software-properties-common >/dev/null
+              add-apt-repository -y ppa:deadsnakes/ppa >/dev/null
+              apt-get update -qq
+              apt-get install -y -qq python3.12 python3.12-venv python3.12-dev \
+                ffmpeg binutils >/dev/null
+              ln -sf /usr/bin/python3.12 /usr/local/bin/python3
               packaging/build_binary.sh dist
               chown -R '"$(id -u):$(id -g)"' dist'
 
