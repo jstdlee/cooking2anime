@@ -76,8 +76,8 @@ audio:                       # original audio is always removed; no narration
   true_peak_dbtp: -1         # both layers disabled => no audio track
 
 canvas:
-  app: godraw                # godraw | tldraw (same .tldr file)
-  godraw_commit: null        # pinned commit, set after spike S1
+  app: godraw                # native canvas (macOS / Linux / Windows)
+  godraw_commit: null        # pinned commit, checked by `c2a doctor`
   board: board.tldr          # runs/<id>/board.tldr
   write_interval_s: 2
   thumb_max_px: 512

@@ -10,7 +10,7 @@ These rules are binding. A PR that breaks one does not merge.
 | Property | `tests/property` | every PR (1k examples), nightly (10k) | < 90 s | Invariants: timeline, board merge, ownership |
 | Contract | `tests/contract` | every PR | < 60 s | Each provider backend sends and parses the right wire format, using recorded HTTP/WS fixtures (no network) |
 | Integration (fake) | `tests/integration` | every PR | < 4 min | The whole pipeline on fixture clips with fake providers |
-| Board | `tests/board` | every PR (file level), nightly macOS (real GoDraw) | < 2 min | `.tldr` validity, simulated user edits, real-app e2e |
+| Board | `tests/board` | every PR (file level + real GoDraw on Linux/Xvfb) | < 3 min | `.tldr` validity, simulated user edits, real-app e2e |
 | GPU | `tests/gpu` | nightly on the self-hosted GPU runner, and before each release | < 2 h | Real models on fixture clips; VRAM and time budgets |
 | Golden | `tests/golden` | weekly, before each release, and on PRs labelled `quality` | < 6 h | Quality metrics on the golden set vs the frozen baseline |
 
@@ -74,9 +74,11 @@ These rules are binding. A PR that breaks one does not merge.
   approval and a notice; prompt note edited → override recorded with the board hash.
 - Rebuild: deleting `board.tldr` and running `c2a board rebuild` gives the same
   engine-owned records.
-- Real GoDraw (nightly, macOS, pinned commit): open → drag the sticker over the
-  automation socket → approval within 3 s. A manual checklist is also signed off once
-  per release.
+- Real GoDraw (every PR, Linux under Xvfb, pinned commit): open → drag the sticker over
+  the automation socket → approval within 3 s; edit a prompt note → override recorded;
+  engine status writes are picked up while the app is open. A macOS and Windows manual
+  checklist is signed off once per release.
+- `▶ open` links: every link on the board points to an existing mp4 in the run folder.
 
 ### Providers
 - Contract test per backend: request shape, auth header, retry on 429/5xx with
@@ -134,8 +136,8 @@ These rules are binding. A PR that breaks one does not merge.
 ## 5. CI pipeline
 
 ```
-PR:      ruff → mypy → unit → property(1k) → contract → integration-fake → board(file) → coverage gate
-nightly: property(10k) → gpu → board(real GoDraw, macOS)
+PR:      ruff → mypy → unit → property(1k) → contract → integration-fake → board(file + real GoDraw/Xvfb) → coverage gate
+nightly: property(10k) → gpu
 weekly / release / label:quality: golden → human-eval checklist (release only)
 ```
 `main` is protected: every PR job is required, plus one review.

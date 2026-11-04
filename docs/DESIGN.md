@@ -232,10 +232,11 @@ class VoiceFX(Protocol):    def vocal(direction: str, voice_ref: str | None, see
 ```
 c2a doctor                      # GPU/VRAM, ComfyUI reachable, models present + hashes, API keys, ffmpeg
 c2a run in.mp4 [-c cfg.yaml]    # runs to the gate, writes board, prints board path
-c2a board open <run>            # opens runs/<id>/board.tldr in GoDraw (fallback: prints path)
+c2a board open <run>            # opens runs/<id>/board.tldr in GoDraw
 c2a watch <run>                 # watches board.tldr; applies approval/overrides; resumes automatically
 c2a approve <run> --pick 2:1    # headless approval: sample 2, seed 1
 c2a rerun <run> --chunk 3.2     # re-run one chunk (e.g. after editing its note)
+c2a open <run> [--chunk 3.2]    # open a chunk / the output mp4 in the system player
 c2a status <run> [--json]
 c2a calibrate --golden data/golden   # recompute QA thresholds on the golden set
 ```
@@ -245,25 +246,23 @@ manifest atomically (temp file + `rename`).
 
 ## 6. GoDraw canvas integration
 
-**Why GoDraw:** [`egoist/godraw`](https://github.com/egoist/godraw) is a native,
-local whiteboard (Go, no web view) that reads and writes tldraw `.tldr` files and
-**picks up changes other apps make to the file**. So the file is a clean contract: the
-engine writes `board.tldr`, the person works in GoDraw, and the engine watches the file.
-Because the format is tldraw's open schema, the same board also opens in tldraw. That
-gives a fallback, and a validator for CI.
+**Decision: GoDraw is the canvas.** [`egoist/godraw`](https://github.com/egoist/godraw)
+is a native, local whiteboard (Go on MyGo, no web view) for macOS, Linux and Windows.
+It reads and writes tldraw `.tldr` files and **picks up changes other apps make to the
+file**. That makes the file a clean contract: the engine writes `board.tldr`, the person
+works in GoDraw, and the engine watches the file. The same file also opens in tldraw,
+and CI validates every board against tldraw's schema.
 
-**Caveats to check before depending on it (spike S1 in the dev plan):**
-- The repository declares no license, so we never vendor or fork its code. We use it
-  only as a separate app the user installs, at a pinned commit.
-- It is days old. Format and app behaviour may change, so pin the commit and keep
-  contract tests on `.tldr`.
-- The packaging is macOS-first, so Linux and Windows support must be checked.
-- It has no video playback (videos show as labelled boxes). The board therefore shows
-  **frame strips** (first, middle and last frame, plus a 2 fps strip) and a path to the
-  mp4.
-- How assets are stored (data URL vs file path) must be checked. The default plan is
-  small JPEG thumbnails (≤ 512 px, about 40 KB) as data URLs, with a budget of about
-  25 MB per board.
+- **Version:** pinned to one GoDraw commit (`canvas.godraw_commit`). `c2a doctor`
+  checks the installed build, and `c2a board open` launches it.
+- **Video:** not played on the canvas. Every chunk and the final output has a clickable
+  `▶ open` shape whose link points to the mp4 (`file://…`), so it opens in the system
+  player. `c2a open <run> --chunk 3.2` does the same from the CLI. The chunk frame shows
+  restyled first/last keyframes and a small strip of frames, so the board can be
+  scanned without playing anything.
+- **Images:** JPEG thumbnails ≤ 512 px. The asset storage mode (embedded data URL vs
+  file path next to the board) is fixed in spike S1. The budget is about 25 MB per
+  board whichever mode is used.
 
 **Board layout (one `.tldr`, three pages)**
 
@@ -289,7 +288,7 @@ gives a fallback, and a validator for CI.
 
   Each input is checked and copied into the manifest with the board hash, then shown on
   the board as handled (the sticker turns green).
-- **The board is rebuildable.** If GoDraw overwrites a status record with an older copy,
+- **The board is rebuildable.** If GoDraw autosaves an older copy over a status record with an older copy,
   the next projection puts it back. Losing the board never loses state, and `c2a board
   rebuild` makes it again from the manifest.
 
@@ -326,7 +325,6 @@ A 60 s video is about 12–15 chunks of 5 s each. Expect 1–3 h on a single 409
 |------|------------|
 | Motion differs from the source | First+last anchors, timed beats, shorter chunks on QA fail; pose-control fallback is a v2 item |
 | Text leaks in | Clean-image prompt + negative prompt; OCR gate with retry |
-| GoDraw changes / unclear license / platform | Plain `.tldr` contract with tldraw-schema validation; tldraw as fallback viewer; CLI `approve` always works |
+| Engine and GoDraw both writing the board | Ownership rules, optimistic write, board rebuildable from the manifest; CLI `approve` always works |
 | Drama 3 speaks real words | Whisper word guard, then drop the event |
-| Concurrent board edits | Ownership rules, optimistic write, board rebuildable from the manifest |
 | Licenses | `commercial_ok` per provider; Fish Community License terms; voice refs only with consent |

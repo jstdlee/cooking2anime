@@ -25,14 +25,14 @@ Total ≈ 13 weeks to v1.
 
 | ID | Question | Time box | Output |
 |----|----------|----------|--------|
-| S1 | **GoDraw:** does it build on our OS targets (macOS, Linux)? Does it reliably pick up external file writes? How are image assets stored (data URL vs path)? Does it preserve `meta` and unknown records exactly? Can its `-tags e2e` automation socket drive it from tests? | 1.5 d | ADR-001 + a `.tldr` fixture set |
+| S1 | **GoDraw integration details:** pick-up delay for external writes, and what happens when the user is editing at that moment; asset storage (data URL vs path); `meta` and unknown records kept exactly; shape links open the mp4 in the system player; driving it from tests through the `-tags e2e` automation socket on Linux (Xvfb) | 1 d | ADR-001 + a `.tldr` fixture set |
 | S2 | **Wan FLF2V** on a 4090 at 720p: VRAM, seconds per chunk for L = 49/81, and boundary SSIM achieved | 1 d | ADR-002 + numbers |
 | S3 | **Qwen-Image-Edit** with a multi-image style reference: how consistent is it across 10 keyframes? Does the clean prompt remove burned-in text from real frames? | 1 d | ADR-003 + contact sheet |
 | S4 | **Drama 3 non-speech sounds:** do bracket-only directions produce no words? Whisper word rate over 50 samples | 0.5 d | ADR-004 |
 | S5 | **HunyuanVideo-Foley:** sync quality on chop/sizzle and maximum window length | 0.5 d | ADR-005 |
 
-**Exit:** each spike has a go / no-go decision. If S1 is no-go, the canvas target
-becomes tldraw (same `.tldr` contract) and nothing else in the plan changes.
+**Exit:** each spike has a go / no-go decision. S1 only fixes the integration details
+above; GoDraw is the chosen canvas either way.
 
 ---
 
@@ -85,11 +85,11 @@ becomes tldraw (same `.tldr` contract) and nothing else in the plan changes.
 - `c2a/board/model.py`: typed models for the `.tldr` records we use (document, page,
   frame, image, note, geo, arrow, asset), `meta.c2a` ownership.
 - `c2a/board/projector.py`: manifest → board (all three pages, stable layout, status
-  colours, frame strips, thumbnail budget).
+  colours, frame strips, `▶ open` links to mp4s, thumbnail budget).
 - `c2a/board/reader.py`: approval through sticker `parentId`, prompt-note diff,
   re-run stickers. Every input is validated.
 - `c2a/board/sync.py`: optimistic read-merge-write, 2 s batching, `c2a watch`, `c2a
-  board open|rebuild`.
+  board open|rebuild`, `c2a open`.
 - Node-based validator in CI: `tools/tldr-validate` checks every board we produce
   against `@tldraw/tlschema` at the pinned version.
 
@@ -97,9 +97,10 @@ becomes tldraw (same `.tldr` contract) and nothing else in the plan changes.
 - A user's own shapes survive 100 engine rewrites byte for byte (property test).
 - In the simulated-user e2e test (a script edits the file the way GoDraw would): drag
   the sticker in → the run resumes within 3 s.
-- Real GoDraw e2e test on macOS (automation socket, from S1): open the board, move the
-  sticker, and the approval lands. Runs nightly; the manual checklist is also signed off.
-- The board opens in tldraw without migration errors.
+- Real GoDraw e2e test on Linux under Xvfb (automation socket, pinned commit): open the
+  board, move the sticker, and the approval lands. Runs in CI; a macOS and Windows manual
+  checklist is signed off once per release.
+- Every board passes the tldraw schema validator.
 
 ---
 

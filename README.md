@@ -11,7 +11,7 @@ on a local GPU (ComfyUI) or in the cloud (fal + Fish API).
 ```
 engine (c2a.core)  ←  CLI (c2a run / watch / approve / rerun …)
         ↕ runs/<id>/board.tldr
-GoDraw canvas (review, drag ✓ to approve, edit prompt notes)
+GoDraw canvas (review, drag ✓ to approve, edit prompt notes, click ▶ to open clips)
 ```
 
 - Design: [docs/DESIGN.md](docs/DESIGN.md)
