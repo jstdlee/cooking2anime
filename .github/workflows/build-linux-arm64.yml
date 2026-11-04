@@ -6,13 +6,19 @@ name: build linux-arm64
 #   - cooking2anime-<version>-py3-none-any.whl
 # The c2a binary is built natively when the repository variable ARM64_RUNNER names an
 # arm64 runner; otherwise inside an arm64 Ubuntu 22.04 container under QEMU on an x86 runner.
-# On a `v*` tag the artifacts are attached to a GitHub release.
+# On a `v*` tag push, or a manual run with `release_tag` set (the release job then
+# creates the tag at the built commit), the artifacts are attached to a GitHub release.
 
 on:
   push:
     branches: [main, "claude/**"]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publish a release with this tag (e.g. v0.1.0; must match the package version)"
+        required: false
+        default: ""
 
 env:
   GODRAW_COMMIT: 03717388cddebd320b4d4949011340e74c9091cf  # keep in sync with configs/default.yaml
@@ -115,16 +121,25 @@ jobs:
 
   release:
     name: GitHub release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
     needs: [c2a, godraw, wheel]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-      - env:
+      - name: Publish release
+        env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --generate-notes
+          TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad tag: $TAG"; exit 1; }
+          VERSION="$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)"
+          [ "v$VERSION" = "$TAG" ] || { echo "tag $TAG != package version $VERSION"; exit 1; }
+          ls -la dist
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "cooking2anime $TAG" --generate-notes
