@@ -1,0 +1,11 @@
+name: black_white
+layer: finish
+title: Black & white
+description: Monochrome with rich greys
+image_prompt: black and white monochrome
+video_prompt: ''
+negative: colour
+post:
+  bw: true
+  contrast: 1.1
+  grain: 0.2

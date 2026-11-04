@@ -12,3 +12,6 @@ dist/
 *.egg-info/
 runs/
 tools/tldr-validate/node_modules/
+c2a/studio/static/
+studio/node_modules/
+studio/test-results/

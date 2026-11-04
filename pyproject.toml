@@ -1,6 +1,6 @@
 [project]
 name = "cooking2anime"
-version = "0.1.0"
+version = "0.2.0"
 description = "Remake cooking videos as Japanese anime: prompt-driven, one human approval on a GoDraw canvas."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -9,6 +9,10 @@ dependencies = [
     "pyyaml>=6",
     "numpy>=1.26",
     "pillow>=10",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "websockets>=12",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +25,7 @@ dev = [
     "mypy>=1.11",
     "types-PyYAML",
     "pyinstaller>=6.10",
+    "httpx>=0.27",
 ]
 
 [project.scripts]
@@ -34,7 +39,8 @@ build-backend = "setuptools.build_meta"
 include = ["c2a*"]
 
 [tool.setuptools.package-data]
-c2a = ["board/*.json", "prompts/*.json", "prompts/*.yaml", "styles/*.yaml"]
+c2a = ["prompts/*.yaml", "styles/*/*.yaml", "studio/static/*", "studio/static/assets/*",
+       "studio/static/assets/*/*"]
 
 [tool.ruff]
 line-length = 100
@@ -43,6 +49,9 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 ignore = ["RUF001", "RUF002", "RUF003", "RUF007"]
+
+[tool.ruff.lint.per-file-ignores]
+"c2a/studio/server.py" = ["B008"]  # FastAPI's File()/Form() defaults are the idiom
 
 [tool.mypy]
 python_version = "3.12"

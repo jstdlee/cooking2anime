@@ -16,8 +16,8 @@ import numpy as np
 
 from c2a.core import media
 from c2a.core.manifest import file_digest
-from c2a.prompts.vocab import CAMERA, EMOTION, sound_cues
-from c2a.providers.base import ProviderInfo, Stack, TimedCue
+from c2a.prompts.vocab import CAMERA, COOKING_VERBS, DIRECTIONS, EMOTION, SPEEDS, sound_cues
+from c2a.providers.base import ProviderInfo, Stack, TimedCue, Word
 
 SR = 48_000
 
@@ -33,32 +33,32 @@ def _rng(*parts: object) -> np.random.Generator:
 
 
 class FakeVLM:
+    """Deterministic tags from the image content; importance from visible detail."""
+
     info = _info("fake-vlm")
 
-    def describe(self, clip: Path, duration: float, instructions: str,
-                 schema: dict[str, Any], seed: int) -> Any:
-        r = _rng(file_digest(clip), seed)
+    def tag(self, image: Path, clip: Path, duration: float, instructions: str,
+            schema: dict[str, Any], seed: int) -> Any:
+        img = media.load_png(image)
+        r = _rng(file_digest(image), seed)
         cues = sorted(sound_cues())
-        mid = round(duration / 2, 3)
-        label = EMOTION[int(r.integers(len(EMOTION)))]
+        detail = float(np.abs(np.diff(img.astype(np.float32), axis=1)).mean())
+        importance = round(min(1.0, 0.35 + detail / 40), 3)
+        verb = COOKING_VERBS[int(r.integers(len(COOKING_VERBS) - 1))]
         return {
-            "subjects": ["hands", "chef's knife", "vegetables", "wooden board"],
-            "setting": "home kitchen with warm window light",
-            "food_state": "vegetables being prepared",
-            "beats": [
-                {"t0": 0.0, "t1": mid, "action": "right hand slices vegetables in even strokes"},
-                {"t0": mid, "t1": round(duration, 3),
-                 "action": "knife gathers the slices to one side of the board"},
-            ],
-            "gestures": ["left hand fingertips curled to guide the food"],
-            "emotion": {"label": label, "intensity": int(r.integers(4)),
-                        "t": round(duration * 0.5, 3)},
+            "scene": "home kitchen with warm window light",
+            "action": verb,
+            "motion": {"verb": verb, "direction": DIRECTIONS[int(r.integers(len(DIRECTIONS)))],
+                       "speed": SPEEDS[1 + int(r.integers(len(SPEEDS) - 1))]},
+            "subjects": ["hands", "vegetables"],
+            "emotion": {"label": EMOTION[int(r.integers(len(EMOTION)))],
+                        "intensity": int(r.integers(4))},
             "camera": list(CAMERA)[int(r.integers(len(CAMERA)))],
             "person_visible": bool(r.integers(2)),
-            "sound_cues": [
-                {"t0": 0.0, "t1": mid, "cue": cues[int(r.integers(len(cues)))]},
-                {"t0": mid, "t1": round(duration, 3), "cue": cues[int(r.integers(len(cues)))]},
-            ],
+            "sound_cues": [cues[int(r.integers(len(cues)))]],
+            "importance": importance,
+            "suggest": importance >= 0.5,
+            "reason": "deterministic fake tag",
         }
 
     def judge_motion(self, clip: Path, beats: list[str], seed: int) -> float:
@@ -82,9 +82,27 @@ class FakeImageEdit:
 
 
 class FakeVideoGen:
-    """Linear cross-fade first → last with exactly `frames` frames."""
+    """i2v: slow 6% push-in on the image; flf2v: cross-fade first → last. Exact frame counts."""
 
     info = _info("fake-video-gen")
+
+    def i2v(self, first: Path, frames: int, fps: int, prompt: str, negative: str, seed: int,
+            dst: Path) -> Path:
+        from PIL import Image
+
+        a = media.load_png(first)
+        h, w = a.shape[:2]
+        im = Image.fromarray(a)
+
+        def gen() -> Any:
+            for i in range(frames):
+                z = 1 + 0.06 * (i / max(1, frames - 1))
+                cw, ch = w / z, h / z
+                box = ((w - cw) / 2, (h - ch) / 2, (w + cw) / 2, (h + ch) / 2)
+                yield np.asarray(im.resize((w, h), Image.Resampling.BILINEAR, box=box))
+
+        media.write_video(gen(), dst, Fraction(fps), crf=8, preset="veryfast")
+        return dst
 
     def flf2v(self, first: Path, last: Path, frames: int, fps: int, prompt: str,
               negative: str, seed: int, dst: Path) -> Path:
@@ -177,6 +195,54 @@ class FakeOCR:
         return 0
 
 
+class FakeSeparator:
+    """Passes the mix through as the 'voice' stem (real separation: BS-RoFormer/Demucs)."""
+
+    info = _info("fake-separator")
+
+    def voice(self, mix: Path, dst: Path) -> Path:
+        data, sr = read_wav(mix)
+        write_wav(dst, data, sr)
+        return dst
+
+
+class EnergyWordTimer:
+    """Energy-based voice activity + dip splitting: real behaviour for clean voice stems,
+    standing in for WhisperX word timestamps (which also give the words' text)."""
+
+    info = _info("energy-vad")
+    frame_s = 0.02
+
+    def words(self, wav: Path) -> list[Word]:
+        data, sr = read_wav(wav)
+        mono = data.mean(axis=1) if data.ndim == 2 else data
+        hop = max(1, round(self.frame_s * sr))
+        n = len(mono) // hop
+        if n == 0:
+            return []
+        rms = np.sqrt((mono[: n * hop].reshape(n, hop) ** 2).mean(axis=1))
+        peak = float(rms.max())
+        if peak < 1e-4:
+            return []
+        thr = max(peak * 0.1, 1e-4)
+        active = rms > thr
+        out: list[Word] = []
+        i = 0
+        while i < n:
+            if not active[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and active[j]:
+                j += 1
+            if j - i >= 3:  # ≥ 60 ms
+                out.append(Word(round(i * self.frame_s, 3), round(j * self.frame_s, 3),
+                                f"w{len(out) + 1}"))
+            i = j
+        return out
+
+
 def fake_stack() -> Stack:
     return Stack(vlm=FakeVLM(), image_edit=FakeImageEdit(), video_gen=FakeVideoGen(),
-                 foley=FakeFoley(), voice=FakeVoiceFX(), asr=FakeASR(), ocr=FakeOCR())
+                 foley=FakeFoley(), voice=FakeVoiceFX(), asr=FakeASR(), ocr=FakeOCR(),
+                 separator=FakeSeparator(), word_timer=EnergyWordTimer())

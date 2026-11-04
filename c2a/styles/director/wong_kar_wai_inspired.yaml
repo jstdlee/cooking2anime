@@ -1,0 +1,10 @@
+name: wong_kar_wai_inspired
+layer: director
+title: Wong Kar-wai-inspired
+description: Saturated neon, smeared step-printed motion, handheld
+image_prompt: saturated neon colour, moody low light, rich reds and greens, shallow focus
+video_prompt: handheld camera, step-printed smeared motion blur, intimate
+negative: flat lighting
+camera_bias:
+- handheld
+- push_in

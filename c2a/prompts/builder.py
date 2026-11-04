@@ -1,11 +1,13 @@
-"""Deterministic prompt assembly for one chunk (design §3.3).
+"""Deterministic prompt assembly for one clip (DESIGN_V2 §2.5, §3).
 
-positive = style + scene + beats + gestures + emotion + camera + quality suffix
-negative = preset negative + style negative
+positive = style video prompt + motion sentence (from the key image's tags, or the person's
+           override) + subjects + scene + emotion + camera (after the director's bias)
+negative = composed style negative
 
-Over budget, parts are dropped in this order: gestures, quality suffix, setting.
-Beats and emotion are never dropped; if they alone exceed the budget, beats are shortened
-word by word from the end of the longest beat.
+Over budget, parts are dropped in this order: scene, subjects. The motion sentence,
+emotion and style are never dropped; if they alone exceed the budget, the style prompt is
+trimmed phrase by phrase from the end of the preset phrases; the person's custom phrases
+are never dropped.
 """
 
 from __future__ import annotations
@@ -14,10 +16,11 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
-from c2a.prompts.describe import ChunkDescription
+from c2a.prompts.style import ComposedStyle, bias_camera
+from c2a.prompts.tags import KeyTags
 from c2a.prompts.vocab import CAMERA, emotion_phrase
 
-TEMPLATE_VERSION = 1
+TEMPLATE_VERSION = 2
 WAN_TEXT_LIMIT = 512
 HEADROOM = 0.15
 
@@ -27,10 +30,7 @@ class Tokenizer(Protocol):
 
 
 class ApproxTokenizer:
-    """Conservative stand-in for the umT5 tokenizer: ~1.35 tokens per word piece.
-
-    Real models plug in their own tokenizer (M3); this one over-estimates on purpose.
-    """
+    """Conservative stand-in for the umT5 tokenizer (over-estimates on purpose)."""
 
     _piece = re.compile(r"\w+|[^\w\s]")
 
@@ -39,16 +39,10 @@ class ApproxTokenizer:
 
 
 @dataclass(frozen=True)
-class Preset:
-    name: str
-    quality_suffix: str
-    negative: str
-
-
-@dataclass(frozen=True)
 class BuiltPrompt:
     positive: str
     negative: str
+    camera: str
     tokens: int
     dropped: tuple[str, ...]
     template_version: int = TEMPLATE_VERSION
@@ -58,61 +52,53 @@ def _clean(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip().rstrip(".,; ")
 
 
-def beats_sentence(d: ChunkDescription) -> str:
-    actions = [_clean(b.action) for b in d.beats]
-    if len(actions) == 1:
-        return actions[0]
-    if len(actions) == 2:
-        return f"first {actions[0]}, then {actions[1]}"
-    middle = ", then ".join(actions[1:-1])
-    return f"first {actions[0]}, then {middle}, finally {actions[-1]}"
+def motion_sentence(t: KeyTags) -> str:
+    verb = t.motion.verb.replace("_", " ")
+    what = " and ".join(_clean(s) for s in t.subjects[:2])
+    s = f"{verb} the {what}" if what else verb
+    if t.motion.direction != "none":
+        s += f", moving {t.motion.direction.replace('_', ' ')}"
+    if t.motion.speed != "still":
+        s += f", {t.motion.speed}"
+    return s
 
 
-def build_prompt(
-    d: ChunkDescription,
-    style_prompt: str,
-    style_negative: str,
-    preset: Preset,
-    *,
-    beats_override: str | None = None,
-    tokenizer: Tokenizer | None = None,
-    limit: int = WAN_TEXT_LIMIT,
-) -> BuiltPrompt:
+def build_clip_prompt(tags: KeyTags, style: ComposedStyle, *,
+                      motion_override: str | None = None,
+                      tokenizer: Tokenizer | None = None,
+                      limit: int = WAN_TEXT_LIMIT) -> BuiltPrompt:
     tok = tokenizer or ApproxTokenizer()
     budget = int(limit * (1 - HEADROOM))
-    beats = _clean(beats_override) if beats_override else beats_sentence(d)
+    camera = bias_camera(tags.camera, style.camera_bias)
+    style_phrases = [p.strip() for p in style.video_prompt.split(",") if p.strip()]
     parts: dict[str, str] = {
-        "style": _clean(style_prompt),
-        "subjects": ", ".join(_clean(s) for s in d.subjects),
-        "food_state": _clean(d.food_state),
-        "setting": _clean(d.setting),
-        "beats": beats,
-        "gestures": "; ".join(_clean(g) for g in d.gestures),
-        "emotion": emotion_phrase(d.emotion.label, d.emotion.intensity),
-        "camera": CAMERA[d.camera],
-        "quality": _clean(preset.quality_suffix),
+        "style": ", ".join(style_phrases),
+        "motion": _clean(motion_override) if motion_override else motion_sentence(tags),
+        "subjects": ", ".join(_clean(s) for s in tags.subjects),
+        "scene": _clean(tags.scene),
+        "emotion": emotion_phrase(tags.emotion.label, tags.emotion.intensity),
+        "camera": CAMERA[camera],
     }
-    order = ["style", "subjects", "food_state", "setting", "beats", "gestures", "emotion",
-             "camera", "quality"]
+    order = ["style", "motion", "subjects", "scene", "emotion", "camera"]
 
     def render() -> str:
         return ". ".join(parts[k] for k in order if parts.get(k)) + "."
 
     dropped: list[str] = []
-    for victim in ("gestures", "quality", "setting"):
+    for victim in ("scene", "subjects"):
         if tok.count(render()) <= budget:
             break
         if parts.get(victim):
             parts[victim] = ""
             dropped.append(victim)
+    custom = {c.lower() for c in style.custom_phrases}
     while tok.count(render()) > budget:
-        words = parts["beats"].split()
-        if len(words) <= 3:
-            raise ValueError("prompt cannot fit the token budget even with minimal beats")
-        parts["beats"] = " ".join(words[:-1])
-        if "beats_trimmed" not in dropped:
-            dropped.append("beats_trimmed")
-
+        preset_idx = [i for i, ph in enumerate(style_phrases) if ph.lower() not in custom]
+        if len(preset_idx) <= 1:
+            raise ValueError("prompt cannot fit the token budget")
+        style_phrases.pop(preset_idx[-1])
+        parts["style"] = ", ".join(style_phrases)
+        if "style_trimmed" not in dropped:
+            dropped.append("style_trimmed")
     positive = render()
-    negative = ", ".join(x for x in (_clean(preset.negative), _clean(style_negative)) if x)
-    return BuiltPrompt(positive, negative, tok.count(positive), tuple(dropped))
+    return BuiltPrompt(positive, style.negative, camera, tok.count(positive), tuple(dropped))

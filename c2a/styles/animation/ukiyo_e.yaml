@@ -1,0 +1,9 @@
+name: ukiyo_e
+layer: animation
+title: Ukiyo-e woodblock
+description: Edo-period woodblock print, flat colour, bold contours
+image_prompt: ukiyo-e woodblock print style, flat colour areas, bold black contours, washi paper texture,
+  traditional Japanese palette
+video_prompt: ukiyo-e woodblock print come to life, flat colour animation
+negative: photorealistic, 3d render, gradients
+realism: 0.1

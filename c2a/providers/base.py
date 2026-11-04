@@ -24,12 +24,19 @@ class TimedCue:
     cue: str
 
 
+@dataclass(frozen=True)
+class Word:
+    start: float
+    end: float
+    text: str
+
+
 @runtime_checkable
 class VLM(Protocol):
     info: ProviderInfo
 
-    def describe(self, clip: Path, duration: float, instructions: str,
-                 schema: dict[str, Any], seed: int) -> Any: ...
+    def tag(self, image: Path, clip: Path, duration: float, instructions: str,
+            schema: dict[str, Any], seed: int) -> Any: ...
 
     def judge_motion(self, clip: Path, beats: list[str], seed: int) -> float: ...
 
@@ -45,6 +52,9 @@ class ImageEdit(Protocol):
 @runtime_checkable
 class VideoGen(Protocol):
     info: ProviderInfo
+
+    def i2v(self, first: Path, frames: int, fps: int, prompt: str, negative: str, seed: int,
+            dst: Path) -> Path: ...
 
     def flf2v(self, first: Path, last: Path, frames: int, fps: int, prompt: str,
               negative: str, seed: int, dst: Path) -> Path: ...
@@ -73,6 +83,20 @@ class ASR(Protocol):
 
 
 @runtime_checkable
+class StemSeparator(Protocol):
+    info: ProviderInfo
+
+    def voice(self, mix: Path, dst: Path) -> Path: ...
+
+
+@runtime_checkable
+class WordTimer(Protocol):
+    info: ProviderInfo
+
+    def words(self, wav: Path) -> list[Word]: ...
+
+
+@runtime_checkable
 class OCR(Protocol):
     info: ProviderInfo
 
@@ -88,7 +112,9 @@ class Stack:
     voice: VoiceFX
     asr: ASR
     ocr: OCR
+    separator: StemSeparator
+    word_timer: WordTimer
 
     def all(self) -> list[Any]:
         return [self.vlm, self.image_edit, self.video_gen, self.foley, self.voice, self.asr,
-                self.ocr]
+                self.ocr, self.separator, self.word_timer]

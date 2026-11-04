@@ -1,0 +1,10 @@
+name: bleach_bypass
+layer: finish
+title: Bleach bypass
+description: Desaturated, high contrast, silvery
+image_prompt: desaturated silvery high contrast look
+video_prompt: ''
+negative: ''
+post:
+  saturation: 0.6
+  contrast: 1.25

@@ -1,9 +1,13 @@
-"""Typed configuration. `configs/default.yaml` must equal `Config()` (checked by a test)."""
+"""Typed configuration (v2). `configs/default.yaml` must equal `Config()` (checked by a test).
+
+Per-run choices made in the Studio or CLI (style layers, clip lengths, audio mode) are
+stored in the run manifest under "settings" and deep-merged over this config.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -28,43 +32,54 @@ class OutputCfg(_Model):
     crf: int = Field(18, ge=0, le=51)
 
 
-class AnalyzeCfg(_Model):
+class IngestCfg(_Model):
     shot_detector: Literal["transnetv2", "ffmpeg_scene"] = "transnetv2"
-    cut_threshold: float = Field(0.5, gt=0, lt=1)
     gen_fps: int = Field(16, gt=0)
-    chunk_frames: list[int] = [81, 65, 49, 33, 17]
 
 
-class DescribeCfg(_Model):
+class KeysCfg(_Model):
+    sensitivity: float = Field(0.7, gt=0, le=2)
+    min_gap_s: float = Field(0.75, gt=0)
+    max_gap_s: float = Field(5.0, gt=0)
+    refine_s: float = Field(0.25, ge=0)
+    auto_check_min: float = Field(0.6, ge=0, le=1)
+    analysis_width: int = Field(128, ge=32, le=512)
+
+
+class TagCfg(_Model):
     vlm: Literal["qwen_vl", "cloud_vlm"] = "qwen_vl"
     sample_fps: int = Field(4, gt=0)
-    max_beats: int = Field(4, ge=1, le=8)
-    ignore_overlays: bool = True
+
+
+class StyleSelectionCfg(_Model):
+    animation: str | None = "theatrical_anime"
+    director: str | None = "food_commercial"
+    finish: str | None = "grain_35mm"
+    custom_prompt: str = ""
+    custom_negative: str = ""
 
 
 class PreviewCfg(_Model):
-    sample_keyframes: int = Field(4, ge=1, le=12)
-    seeds_per_keyframe: int = Field(3, ge=1, le=8)
+    sample_keys: int = Field(3, ge=1, le=8)
+    seeds_per_key: int = Field(3, ge=1, le=6)  # the chosen combination + variations
 
 
 class StyleCfg(_Model):
-    preset: str = "shinkai_food"
-    prompt: str = (
-        "Japanese anime cooking scene, cinematic Shinkai-style lighting, painterly "
-        "background, highly detailed glossy food, shallow depth of field, soft film "
-        "grain, professional photography composition\n"
-    )
-    clean_prompt: str = "clean image, no text, no logo, no watermark, no subtitles"
-    negative: str = (
-        "text, letters, subtitles, captions, watermark, logo, signature, UI, "
-        "blurry, deformed hands, extra fingers, low quality, flicker\n"
-    )
-    realism: float = Field(0.45, ge=0, le=1)
+    selection: StyleSelectionCfg = StyleSelectionCfg()
     preview: PreviewCfg = PreviewCfg()
 
 
+class ClipsCfg(_Model):
+    length_mode: Literal["match", "fixed", "per_clip"] = "match"
+    fixed_s: float = Field(3.0, gt=0)
+    min_clip_s: float = Field(1.0, gt=0)
+    max_clip_s: float = Field(5.0, gt=0)
+    anchor_end: bool = True
+    per_clip: dict[int, float] = {}  # key start frame → seconds (length_mode per_clip)
+
+
 class GenerateCfg(_Model):
-    model: str = "wan_flf2v_14b"
+    model: str = "wan_i2v_14b"
     max_retries: int = Field(2, ge=0, le=5)
 
 
@@ -80,15 +95,11 @@ class QaCfg(_Model):
 class PostCfg(_Model):
     interpolate: Literal["rife", "nearest"] = "rife"
     upscaler: Literal["seedvr2", "lanczos"] = "seedvr2"
-    lut: str | None = None
-    film_grain: float = Field(0.15, ge=0, le=1)
 
 
 class SfxCfg(_Model):
     enabled: bool = True
     provider: str = "hunyuan_foley"
-    window_s: float = Field(8, gt=0)
-    crossfade_s: float = Field(0.5, ge=0)
 
 
 class VoiceCfg(_Model):
@@ -102,21 +113,28 @@ class VoiceCfg(_Model):
     word_guard: bool = True
 
 
+class KeepVoiceCfg(_Model):
+    stretch_tolerance: float = Field(0.15, ge=0, le=0.5)
+    fade_ms: int = Field(80, ge=0, le=500)
+    crossfade_ms: int = Field(40, ge=0, le=500)
+    phrase_gap_s: float = Field(0.3, gt=0)
+    duck_db: float = Field(8, ge=0, le=30)
+    foley_under: bool = True
+
+
 class AudioCfg(_Model):
+    mode: Literal["regenerate", "keep_voice", "silent"] = "regenerate"
     sfx: SfxCfg = SfxCfg()
     voice: VoiceCfg = VoiceCfg()
+    keep_voice: KeepVoiceCfg = KeepVoiceCfg()
     loudness_lufs: float = -14
     true_peak_dbtp: float = -1
 
 
-class CanvasCfg(_Model):
-    app: Literal["godraw"] = "godraw"
-    godraw_commit: str = "03717388cddebd320b4d4949011340e74c9091cf"
-    board: str = "board.tldr"
-    write_interval_s: float = Field(2, gt=0)
-    thumb_max_px: int = Field(512, ge=64)
-    board_budget_mb: float = Field(25, gt=0)
-    server_port: int = Field(8765, ge=1024, le=65535)
+class StudioCfg(_Model):
+    host: str = "127.0.0.1"
+    port: int = Field(8765, ge=1024, le=65535)
+    open_browser: bool = True
 
 
 class ComfyCfg(_Model):
@@ -148,19 +166,40 @@ class ProvidersCfg(_Model):
 class Config(_Model):
     run: RunCfg = RunCfg()
     output: OutputCfg = OutputCfg()
-    analyze: AnalyzeCfg = AnalyzeCfg()
-    describe: DescribeCfg = DescribeCfg()
+    ingest: IngestCfg = IngestCfg()
+    keys: KeysCfg = KeysCfg()
+    tag: TagCfg = TagCfg()
     style: StyleCfg = StyleCfg()
+    clips: ClipsCfg = ClipsCfg()
     generate: GenerateCfg = GenerateCfg()
     qa: QaCfg = QaCfg()
     post: PostCfg = PostCfg()
     audio: AudioCfg = AudioCfg()
-    canvas: CanvasCfg = CanvasCfg()
+    studio: StudioCfg = StudioCfg()
     providers: ProvidersCfg = ProvidersCfg()
 
 
-def load_config(path: Path | None = None, overrides: dict[str, object] | None = None) -> Config:
-    data: dict[str, object] = {}
+# Settings a person may change per run (Studio / CLI). Anything else is config-only.
+SETTABLE: dict[str, tuple[str, ...]] = {
+    "style": ("selection",),
+    "clips": ("length_mode", "fixed_s", "anchor_end", "per_clip"),
+    "audio": ("mode",),
+    "output": ("resolution",),
+}
+
+
+def check_settings(settings: dict[str, Any]) -> None:
+    for section, value in settings.items():
+        allowed = SETTABLE.get(section)
+        if allowed is None or not isinstance(value, dict):
+            raise ConfigError(f"setting {section!r} cannot be changed per run")
+        bad = set(value) - set(allowed)
+        if bad:
+            raise ConfigError(f"settings not changeable per run: {section}.{sorted(bad)[0]}")
+
+
+def load_config(path: Path | None = None, overrides: dict[str, Any] | None = None) -> Config:
+    data: dict[str, Any] = {}
     if path is not None:
         try:
             loaded = yaml.safe_load(path.read_text()) or {}
@@ -170,27 +209,27 @@ def load_config(path: Path | None = None, overrides: dict[str, object] | None = 
             raise ConfigError(f"{path}: top level must be a mapping")
         data = loaded
     if overrides:
-        data = _deep_merge(data, overrides)
+        data = deep_merge(data, overrides)
     try:
         return Config.model_validate(data)
     except Exception as e:  # pydantic.ValidationError
         raise ConfigError(str(e)) from e
 
 
-def _deep_merge(a: dict[str, object], b: dict[str, object]) -> dict[str, object]:
+def deep_merge(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     out = dict(a)
     for k, v in b.items():
         cur = out.get(k)
-        if isinstance(cur, dict) and isinstance(v, dict):
-            out[k] = _deep_merge(cur, v)
+        if isinstance(cur, dict) and isinstance(v, dict) and k != "per_clip":
+            out[k] = deep_merge(cur, v)
         else:
             out[k] = v
     return out
 
 
-def parse_set(items: list[str]) -> dict[str, object]:
+def parse_set(items: list[str]) -> dict[str, Any]:
     """`--set output.resolution=1080p` → nested dict (values parsed as YAML scalars)."""
-    out: dict[str, object] = {}
+    out: dict[str, Any] = {}
     for item in items:
         if "=" not in item:
             raise ConfigError(f"--set expects key=value, got {item!r}")

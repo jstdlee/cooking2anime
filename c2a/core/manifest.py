@@ -22,12 +22,12 @@ from typing import Any, Literal
 from c2a.core.errors import StageError
 
 State = Literal[
-    "created", "analyzing", "describing", "previewing", "awaiting_approval", "restyling",
-    "generating", "post", "audio", "exporting", "done", "failed",
+    "created", "ingesting", "finding_keys", "tagging", "previewing", "awaiting_approval",
+    "restyling", "generating", "post", "audio", "exporting", "done", "failed",
 ]
 STATES: tuple[State, ...] = (
-    "created", "analyzing", "describing", "previewing", "awaiting_approval", "restyling",
-    "generating", "post", "audio", "exporting", "done", "failed",
+    "created", "ingesting", "finding_keys", "tagging", "previewing", "awaiting_approval",
+    "restyling", "generating", "post", "audio", "exporting", "done", "failed",
 )
 
 MANIFEST = "manifest.json"
@@ -122,8 +122,9 @@ class Run:
             "config": config,
             "units": {},
             "approval": None,
-            "overrides": {"style_prompt": None, "chunks": {}},
-            "rerun_requests": [],
+            "settings": {},
+            "keys_user": {"checked": {}, "added": [], "tags": {}, "motion": {}},
+            "reruns": {},
             "events": [],
         })
         return run

@@ -1,0 +1,9 @@
+name: teal_orange
+layer: finish
+title: Teal-orange
+description: Teal shadows, orange highlights
+image_prompt: teal shadows and warm orange highlights
+video_prompt: ''
+negative: ''
+post:
+  teal_orange: 0.4

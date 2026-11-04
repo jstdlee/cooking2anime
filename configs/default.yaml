@@ -1,92 +1,89 @@
-# cooking2anime — default config (validated by c2a/config.py; unknown keys are errors)
-# See docs/DESIGN.md for what each stage does.
+# cooking2anime — default config (v2). Validated by c2a/config.py; unknown keys are errors.
+# Per-run choices (style layers, clip lengths, audio mode) are made in the Studio or with
+# `c2a style/clips/audio` and stored in the run, overriding these defaults.
 
 run:
   workdir: runs
-  commercial: false          # true => refuse providers with commercial_ok=false
-  stack: local               # local | cloud  (the two supported, calibrated stacks)
-
+  commercial: false
+  stack: local
 output:
-  resolution: 720p           # 720p | 1080p (1080p adds the SeedVR2 upscale)
-  fps: 24                    # or "source"
+  resolution: 720p
+  fps: 24
   codec: h264
   crf: 18
-
-analyze:
+ingest:
   shot_detector: transnetv2
-  cut_threshold: 0.5
   gen_fps: 16
-  chunk_frames: [81, 65, 49, 33, 17]   # Wan needs 4n+1; largest that fits is used
-
-describe:
-  vlm: qwen_vl               # qwen_vl (local) | cloud_vlm
+keys:
+  sensitivity: 0.7
+  min_gap_s: 0.75
+  max_gap_s: 5.0
+  refine_s: 0.25
+  auto_check_min: 0.6
+  analysis_width: 128
+tag:
+  vlm: qwen_vl
   sample_fps: 4
-  max_beats: 4
-  ignore_overlays: true      # never describe on-screen text, logos, UI
-
 style:
-  preset: shinkai_food       # configs/styles/shinkai_food.yaml
-  prompt: >
-    Japanese anime cooking scene, cinematic Shinkai-style lighting, painterly
-    background, highly detailed glossy food, shallow depth of field, soft film
-    grain, professional photography composition
-  clean_prompt: "clean image, no text, no logo, no watermark, no subtitles"
-  negative: >
-    text, letters, subtitles, captions, watermark, logo, signature, UI,
-    blurry, deformed hands, extra fingers, low quality, flicker
-  realism: 0.45              # 0 = pure anime, 1 = near-photographic
+  selection:
+    animation: theatrical_anime
+    director: food_commercial
+    finish: grain_35mm
+    custom_prompt: ''
+    custom_negative: ''
   preview:
-    sample_keyframes: 4
-    seeds_per_keyframe: 3
-
+    sample_keys: 3
+    seeds_per_key: 3
+clips:
+  length_mode: match
+  fixed_s: 3.0
+  min_clip_s: 1.0
+  max_clip_s: 5.0
+  anchor_end: true
+  per_clip: {}
 generate:
-  model: wan_flf2v_14b       # first-last-frame image-to-video, 720p
-  max_retries: 2             # after 2nd retry: simplified beats; then flagged
-
-qa:                          # defaults; `c2a calibrate` writes calibrated values
-  min_style_sim: 0.80
+  model: wan_i2v_14b
+  max_retries: 2
+qa:
+  min_style_sim: 0.8
   min_structure_ssim: 0.35
-  min_boundary_ssim: 0.90
-  min_motion_match: 0.70
+  min_boundary_ssim: 0.9
+  min_motion_match: 0.7
   max_flicker: 0.05
   max_text_boxes: 0
-
 post:
   interpolate: rife
-  upscaler: seedvr2          # 1080p only
-  lut: null
-  film_grain: 0.15
-
-audio:                       # original audio is always removed; no narration
+  upscaler: seedvr2
+audio:
+  mode: regenerate
   sfx:
     enabled: true
-    provider: hunyuan_foley  # local | fal (by run.stack)
-    window_s: 8
-    crossfade_s: 0.5
-  voice:                     # Fish Audio Drama 3, non-speech vocal sounds only
+    provider: hunyuan_foley
+  voice:
     enabled: true
-    provider: fish_api       # fish_api | fish_local
+    provider: fish_api
     model: drama-3
-    reference_id: null       # Fish voice id (only voices you have rights to)
-    min_intensity: 2         # emotion beats with intensity >= this get a sound
-    min_gap_s: 4
-    gain_db: -6
-    word_guard: true         # Whisper must hear 0 words, else retry / drop
-  loudness_lufs: -14
-  true_peak_dbtp: -1         # both layers disabled => no audio track
-
-canvas:
-  app: godraw                # native canvas (macOS / Linux / Windows)
-  godraw_commit: "03717388cddebd320b4d4949011340e74c9091cf"  # pinned egoist/godraw commit
-  board: board.tldr          # runs/<id>/board.tldr
-  write_interval_s: 2
-  thumb_max_px: 512
-  board_budget_mb: 25
-  server_port: 8765          # `c2a watch` serves clips here for the ▶ open links
-
+    reference_id: null
+    min_intensity: 2
+    min_gap_s: 4.0
+    gain_db: -6.0
+    word_guard: true
+  keep_voice:
+    stretch_tolerance: 0.15
+    fade_ms: 80
+    crossfade_ms: 40
+    phrase_gap_s: 0.3
+    duck_db: 8.0
+    foley_under: true
+  loudness_lufs: -14.0
+  true_peak_dbtp: -1.0
+studio:
+  host: 127.0.0.1
+  port: 8765
+  open_browser: true
 providers:
   comfyui:
-    url: http://127.0.0.1:8188   # can point at a remote GPU box
+    url: http://127.0.0.1:8188
   fal:
     api_key_env: FAL_KEY
     max_parallel: 6
@@ -95,4 +92,4 @@ providers:
     base_url: https://api.fish.audio
     local_url: http://127.0.0.1:8080
   cloud_vlm:
-    api_key_env: GEMINI_API_KEY  # or ANTHROPIC_API_KEY, chosen at M3
+    api_key_env: GEMINI_API_KEY

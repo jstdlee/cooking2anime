@@ -53,10 +53,10 @@ def test_state_transitions_are_logged(tmp_path: Path) -> None:
     src = tmp_path / "in.mp4"
     src.write_bytes(b"v")
     run = Run.create(tmp_path / "runs", src, {})
-    run.set_state("analyzing")
+    run.set_state("ingesting")
     run.set_state("failed", "boom")
     m = run.read()
     assert m["state"] == "failed"
-    assert [e["state"] for e in m["events"]] == ["analyzing", "failed"]
+    assert [e["state"] for e in m["events"]] == ["ingesting", "failed"]
     with pytest.raises(ValueError):
         run.set_state("nope")  # type: ignore[arg-type]

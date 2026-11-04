@@ -3,6 +3,7 @@
 cut.mp4      6 s, 29.97 fps CFR, 640x360, hard cut at 3.2 s, sine audio, burned-in text
 vfr.mp4      4 s, variable frame rate, 640x360, sine audio
 vertical.mp4 3 s, 30 fps, 360x640, no audio
+speech.mp4   6 s, 30 fps, 640x360, tone bursts standing in for words at known times
 """
 
 from __future__ import annotations
@@ -11,6 +12,9 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+# (start, end) seconds of the tone bursts in speech.mp4 ("words")
+SPEECH_WORDS = [(0.4, 0.9), (1.1, 1.6), (3.3, 3.7), (3.9, 4.6)]
 
 
 def ff(*args: str) -> None:
@@ -42,7 +46,16 @@ def make(out: Path) -> dict[str, Path]:
     if not vert.exists():
         ff("-f", "lavfi", "-i", "testsrc2=size=360x640:rate=30:duration=3",
            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(vert))
-    return {"cut": cut, "vfr": vfr, "vertical": vert}
+    speech = out / "speech.mp4"
+    if not speech.exists():
+        on = "+".join(f"between(t,{a},{b})" for a, b in SPEECH_WORDS)
+        ff("-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=6",
+           "-f", "lavfi", "-i", "sine=frequency=220:duration=6",
+           "-filter_complex", f"[1:a]volume='if({on},1,0)':eval=frame[a]",
+           "-map", "0:v", "-map", "[a]", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+           "-c:a", "pcm_s16le", str(speech).replace(".mp4", ".mov"))
+        Path(str(speech).replace(".mp4", ".mov")).rename(speech)
+    return {"cut": cut, "vfr": vfr, "vertical": vert, "speech": speech}
 
 
 if __name__ == "__main__":

@@ -1,0 +1,9 @@
+name: ozu_inspired
+layer: director
+title: Ozu-inspired
+description: Low static camera at tatami height, calm symmetric framing
+image_prompt: low camera at tatami height, calm symmetric composition, still life framing
+video_prompt: static locked-off camera at low height, calm unhurried pacing
+negative: camera shake, fast zoom
+camera_bias:
+- static

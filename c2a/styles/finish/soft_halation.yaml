@@ -1,0 +1,9 @@
+name: soft_halation
+layer: finish
+title: Soft halation
+description: Glow around highlights
+image_prompt: soft glowing halation around highlights
+video_prompt: ''
+negative: ''
+post:
+  halation: 0.25

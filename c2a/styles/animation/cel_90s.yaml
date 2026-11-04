@@ -1,0 +1,9 @@
+name: cel_90s
+layer: animation
+title: 90s cel anime
+description: Hand-painted cels, film grain, limited palette
+image_prompt: 1990s hand-painted cel anime, bold ink outlines, flat cel shading, slightly faded limited
+  palette, analogue film texture
+video_prompt: 1990s cel anime animation, limited animation on twos, hand-drawn
+negative: 3d render, gradients, smooth cgi shading
+realism: 0.25

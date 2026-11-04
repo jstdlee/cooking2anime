@@ -1,0 +1,10 @@
+name: kore_eda_inspired
+layer: director
+title: Kore-eda-inspired
+description: Soft natural daylight, intimate everyday warmth
+image_prompt: soft natural window daylight, intimate everyday home kitchen, warm muted tones
+video_prompt: gentle handheld observation, natural pacing
+negative: neon, harsh flash
+camera_bias:
+- handheld
+- static

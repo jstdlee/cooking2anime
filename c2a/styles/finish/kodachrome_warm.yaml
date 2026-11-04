@@ -1,0 +1,11 @@
+name: kodachrome_warm
+layer: finish
+title: Kodachrome warm
+description: Warm saturated reds and yellows
+image_prompt: warm saturated vintage colour
+video_prompt: ''
+negative: ''
+post:
+  warmth: 0.35
+  saturation: 1.15
+  grain: 0.15

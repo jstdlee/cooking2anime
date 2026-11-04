@@ -1,0 +1,12 @@
+name: wes_anderson_inspired
+layer: director
+title: Wes Anderson-inspired
+description: Centred symmetry, pastel palette, flat front light
+image_prompt: perfectly centred symmetrical composition, pastel colour palette, flat frontal lighting,
+  tidy production design
+video_prompt: symmetrical framing, precise lateral moves
+negative: handheld, dutch angle
+camera_bias:
+- static
+- pan_left
+- pan_right

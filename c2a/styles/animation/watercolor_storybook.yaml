@@ -1,0 +1,9 @@
+name: watercolor_storybook
+layer: animation
+title: Watercolor storybook
+description: Soft warm hand-painted watercolor, gentle and cozy
+image_prompt: warm hand-painted watercolor storybook anime, soft edges, gentle pastel light, cozy kitchen,
+  delicate brush texture
+video_prompt: gentle hand-painted watercolor animation, soft cozy motion
+negative: harsh contrast, neon, 3d render
+realism: 0.3

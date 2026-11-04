@@ -1,0 +1,9 @@
+name: grain_35mm
+layer: finish
+title: 35 mm grain
+description: Fine film grain, gentle contrast
+image_prompt: subtle 35mm film grain
+video_prompt: ''
+negative: ''
+post:
+  grain: 0.25

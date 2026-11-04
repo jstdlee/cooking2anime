@@ -1,8 +1,0 @@
-# Shipped, tuned style preset (tuning happens in M4 on the golden set).
-name: shinkai_food
-quality_suffix: >
-  highly detailed textures, cinematic lighting, crisp focus on the food,
-  professional food photography composition, smooth natural motion
-negative: >
-  photorealistic skin pores, 3d render, cgi, plastic look, oversaturated,
-  jpeg artifacts, duplicate hands, morphing objects

@@ -87,6 +87,34 @@ def normalize(src: Path, dst: Path, fps: Fraction) -> VideoInfo:
     return probe(dst, count_frames=True)
 
 
+def extract_audio(src: Path, dst: Path, sr: int = 48_000) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    run([_bin("ffmpeg"), "-y", "-v", "error", "-i", str(src), "-vn", "-ac", "2", "-ar", str(sr),
+         "-c:a", "pcm_s16le", str(dst)])
+
+
+def read_gray(path: Path, width: int) -> Iterator[NDArray[np.uint8]]:
+    """Every frame as a small grey image (width × proportional height, even)."""
+    info = probe(path)
+    h = max(2, round(info.height * width / info.width / 2) * 2)
+    proc = subprocess.Popen(
+        [_bin("ffmpeg"), "-v", "error", "-i", str(path), "-vf",
+         f"scale={width}:{h}:flags=area", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert proc.stdout is not None
+    n = width * h
+    try:
+        while True:
+            buf = proc.stdout.read(n)
+            if len(buf) < n:
+                break
+            yield np.frombuffer(buf, np.uint8).reshape(h, width)
+    finally:
+        proc.stdout.close()
+        proc.kill()
+        proc.wait()
+
+
 def detect_cuts_ffmpeg(path: Path, fps: Fraction, threshold: float) -> list[int]:
     """Scene cuts as source frame indices, using ffmpeg's scene score."""
     proc = run([_bin("ffmpeg"), "-v", "info", "-i", str(path),

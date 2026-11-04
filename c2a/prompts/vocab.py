@@ -47,3 +47,20 @@ def sound_cues() -> dict[str, str]:
     ):
         raise ValueError("sound_cues.yaml must map cue id → phrase")
     return data
+
+
+# Closed cooking-action vocabulary for key image tags (DESIGN_V2 §2.2).
+COOKING_VERBS: Final[tuple[str, ...]] = (
+    "slice", "dice", "mince", "chop", "julienne", "peel", "grate", "crush", "mash", "zest",
+    "crack", "whisk", "beat", "fold", "stir", "mix", "knead", "roll", "shape", "stuff",
+    "season", "sprinkle", "drizzle", "pour", "ladle", "scoop", "spread", "brush", "dip",
+    "coat", "marinate", "rinse", "drain", "strain", "pat_dry", "heat", "sear", "fry",
+    "deep_fry", "stir_fry", "saute", "flip", "toss", "simmer", "boil", "steam", "bake",
+    "roast", "grill", "torch", "glaze", "reduce", "plate", "garnish", "cut_serving", "serve",
+    "taste", "lift", "place", "wipe", "idle",
+)
+DIRECTIONS: Final[tuple[str, ...]] = (
+    "none", "left", "right", "up", "down", "toward_camera", "away_from_camera", "circular",
+    "back_and_forth",
+)
+SPEEDS: Final[tuple[str, ...]] = ("still", "slow", "medium", "fast")

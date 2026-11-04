@@ -1,0 +1,9 @@
+name: theatrical_anime
+layer: animation
+title: Theatrical anime
+description: Luminous skies, detailed light shafts, painterly backgrounds
+image_prompt: Japanese theatrical anime film still, luminous detailed lighting, light shafts, painterly
+  background art, crisp clean linework, highly detailed glossy food
+video_prompt: Japanese theatrical anime animation, smooth fluid motion, detailed lighting
+negative: 3d render, photorealistic skin, cgi
+realism: 0.45

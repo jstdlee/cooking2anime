@@ -1,0 +1,9 @@
+name: modern_tv_anime
+layer: animation
+title: Modern TV anime
+description: Clean lines, flat shading, bright colour
+image_prompt: modern TV anime style, clean thin lines, two-tone flat shading, bright saturated colour,
+  sharp highlights on food
+video_prompt: modern TV anime animation, clean snappy motion
+negative: painterly blur, 3d render
+realism: 0.35

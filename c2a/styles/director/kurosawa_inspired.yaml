@@ -1,0 +1,8 @@
+name: kurosawa_inspired
+layer: director
+title: Kurosawa-inspired
+description: High contrast, deep focus, weather and wind
+image_prompt: high contrast dramatic lighting, deep focus, strong diagonals, drifting steam like weather
+video_prompt: bold dynamic composition, purposeful camera moves
+negative: flat lighting, pastel
+camera_bias: null

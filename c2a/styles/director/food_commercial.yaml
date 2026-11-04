@@ -1,0 +1,12 @@
+name: food_commercial
+layer: director
+title: Food commercial
+description: Macro detail, slow push-in, glossy speculars
+image_prompt: macro food detail, glossy specular highlights, steam backlit, shallow depth of field
+video_prompt: slow push-in, smooth slider move, appetizing slow motion
+negative: messy, dull lighting
+camera_bias:
+- push_in
+- static
+- pan_left
+- pan_right

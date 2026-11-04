@@ -1,0 +1,9 @@
+name: toon_3d
+layer: animation
+title: Toon-shaded 3D
+description: Cel-shaded 3D look, outlines, soft global light
+image_prompt: toon-shaded 3D anime look, cel shading with outlines, soft global illumination, appetizing
+  stylized food
+video_prompt: toon-shaded 3D animation, smooth camera
+negative: photorealistic, noisy render
+realism: 0.55
