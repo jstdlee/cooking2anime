@@ -1,6 +1,6 @@
 # cooking2anime — Design v2: one Studio app, key images, style presets
 
-Status: **proposed**. Replaces the parts of [DESIGN.md](DESIGN.md) (v1, shipped as v0.1.0)
+Status: **implemented in v0.2.0** (deviations from the proposal are listed in §10). Replaces the parts of [DESIGN.md](DESIGN.md) (v1, shipped as v0.1.0)
 listed in §9. Everything not listed there (provider interfaces, cache, QA metrics,
 output contract) carries over unchanged.
 
@@ -29,7 +29,7 @@ and every command it has is also a button in the Studio.
 │ │ Output:  ▶ final video, report                                                              │ │
 │ └─────────────────────────────────────────────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────────────────────────────────┘
-          │ WebSocket (commands up, record diffs down) + HTTP (uploads, media, range requests)
+          │ WebSocket (commands up, view model down) + HTTP (uploads, media, range requests)
 ┌─────────┴───────── c2a engine (Python, same process as `c2a studio`) ─────────────────────────┐
 │ runs/<id>/manifest.json (source of truth) · stages · providers (local ComfyUI / cloud fal)   │
 └───────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -220,8 +220,8 @@ unchanged in principle).
   `toggle_key {t, checked}`, `add_key {t}`, `edit_tags {t, tags}`,
   `set_style {layers, custom}`, `approve {sample}`, `set_clip {t, length_s|anchor}`,
   `set_audio {mode}`, `generate`, `rerun {t}`, `cancel`.
-- Server → client: `records {put, remove}` (tldraw diffs), `progress {stage, unit,
-  pct}`, `notice {level, text}`.
+- Server → client: `view {view}` (the whole run view), `progress {stage, unit, pct}`,
+  `notice {level, text}`, `ack {op_id}`.
 - `GET /media/{run}/{path}` with HTTP Range (inline video scrubbing); allow-listed file
   types, as the v1 clip server.
 - Auth: a random token at start (URL fragment + cookie). Binds to 127.0.0.1 unless
@@ -258,3 +258,30 @@ unchanged in principle).
 §3.4 preview sampling, §3.6 generate inputs, §3.7 post timeline (→ clip lengths), §3.8
 audio (→ modes), §6 GoDraw integration (→ Studio + snapshot). §1's "out of scope" no
 longer excludes keeping the original voice.
+
+## 10. As built (v0.2.0): deviations from the proposal
+
+- **View model instead of record diffs.** The engine pushes a JSON view of the run
+  (keys, plan, style, samples, clips, output) and the frontend renders it inside one
+  custom shape type in five kinds. The engine never writes tldraw records, so there
+  is nothing to merge. See ADR-006.
+- **Key detection stand-ins**, until the model-based signals land with the real stack:
+  - *motion*: mean frame difference instead of RAFT flow. The change is scored relative
+    to the motion level (a stop scores 1, so it doesn't depend on object size).
+  - *direction*: phase correlation for camera moves, and the centroid velocity of
+    changed pixels for objects.
+  - *appearance*: a grey-histogram + edge-profile signature instead of DINOv2.
+
+  The score is the strongest signal relative to its reference level (motion 0.8, a
+  90° turn 0.9); default sensitivity 0.7, with 0.3 s windows. On synthetic clips,
+  changes are found within ±2 frames, and steady sub-pixel motion produces no keys
+  (tests/unit/test_keys_detect.py).
+- **Gate:** the style samples are re-made only while no approval is current. Changing
+  the style needs a new approval; checking keys after approval does not.
+- **Keep-voice:** the voice stem and word timing are providers (BS-RoFormer/WhisperX
+  for the real stack). The CPU stack uses a pass-through separator and an energy-based
+  voice-activity detector, accurate to 20 ms on clean speech. Stretching uses ffmpeg
+  `atempo`, which keeps pitch.
+- **Studio:** a `Run ▶` button re-runs from cache. A canvas navigation bar was added,
+  because tldraw does not render off-screen shapes. `C2A_STUDIO_TOKEN` sets a fixed
+  token (tests, kiosks).

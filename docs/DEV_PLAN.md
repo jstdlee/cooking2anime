@@ -28,8 +28,9 @@ Total ≈ 13 weeks to v1.
 | S1 GoDraw | **done** | Builds on Linux with `go build` (purego, no cgo), cross-compiles to arm64; GTK3 at runtime. Picks up external writes; its save keeps `meta` and unknown records and stays schema-valid; images as data URLs render; automation socket drives it under Xvfb (`tests/godraw`). tldraw links must be http(s), so `▶ open` uses the local server. |
 | M0 Foundation | **done** | `pyproject.toml`, config schema (`configs/default.yaml` == defaults, checked), manifest with atomic writes + locks, cache keys, ffmpeg wrappers, fixtures, CI |
 | M1 Walking skeleton | **done** | All stages on fake providers; exact timeline (property-tested); output contract checked at export |
-| M2 Board v1 | **done** | Projector, reader, optimistic merge, stickers, prompt notes, re-run, rebuild, clip server, real-GoDraw e2e on every CI run |
-| Build | **done** | `build linux-arm64` workflow: smoke-tested PyInstaller binary, GoDraw arm64 binaries, wheel; release on `v*` tags |
+| M2 Board v1 | **done, then replaced by the v2 Studio** | Projector, reader, optimistic merge, stickers, prompt notes, re-run, rebuild, clip server, real-GoDraw e2e on every CI run |
+| Build | **done** | `build linux-arm64` workflow: smoke-tested PyInstaller binary (CLI + Studio), wheel; release on `v*` tags or a manual run |
+| **v2 (S6, V1–V7)** | **done in v0.2.0** | Studio (tldraw), key images, layered presets, segments/clip lengths, keep-voice, CLI parity, Playwright e2e. See DESIGN_V2 §10 for deviations |
 | S2–S5, M3–M8 | to do | Need a GPU box (and a Mac/Windows for the manual checklist) |
 
 ---

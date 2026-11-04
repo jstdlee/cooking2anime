@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 
-STRICT = ("c2a/core/", "c2a/board/", "c2a/prompts/")
+STRICT = ("c2a/core/", "c2a/keys/", "c2a/prompts/", "c2a/audio/")
 STRICT_LINE, STRICT_BRANCH, TOTAL_LINE = 90.0, 85.0, 80.0
 
 

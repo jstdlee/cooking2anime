@@ -12,7 +12,9 @@ from c2a.providers.fake import fake_stack
 
 
 def new_run(workdir: Path, src: Path, **overrides: Any) -> Run:
-    ov: dict[str, Any] = {"run": {"stack": "fake"}}
+    # a 2×2 sample grid keeps tests fast; the default (3×3) is covered by the e2e test
+    ov: dict[str, Any] = {"run": {"stack": "fake"},
+                          "style": {"preview": {"sample_keys": 2, "seeds_per_key": 2}}}
     for k, v in overrides.items():
         node = ov
         parts = k.split("__")

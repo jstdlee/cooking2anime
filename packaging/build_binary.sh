@@ -29,12 +29,34 @@ echo "== smoke test ($(uname -m))"
 "$BIN" doctor --stack fake
 python "$ROOT/tests/fixtures/make_fixtures.py" "$WORK/fx" >/dev/null
 "$BIN" run "$WORK/fx/vertical.mp4" --stack fake --workdir "$WORK/runs" \
-  --set style.preview.sample_keyframes=1 --set style.preview.seeds_per_keyframe=1
+  --set style.preview.sample_keys=1 --set style.preview.seeds_per_key=1 \
+  --set ingest.shot_detector=ffmpeg_scene
 RUN="$(ls -d "$WORK"/runs/*/)"
 "$BIN" approve "$RUN" --pick 0:0
 "$BIN" status "$RUN" --json | python -c 'import json,sys; assert json.load(sys.stdin)["state"]=="done"'
 test -s "$RUN/out/vertical_720p.mp4"
-test -s "$RUN/board.tldr"
+
+echo "== smoke test: studio"
+test -f "$WORK/dist/c2a/_internal/c2a/studio/static/index.html" \
+  || { echo "Studio frontend missing: build studio/ first"; exit 1; }
+C2A_STUDIO_TOKEN=smoke "$BIN" studio --stack fake --no-browser --port 8791 \
+  --workdir "$WORK/runs" > "$WORK/studio.log" 2>&1 &
+STUDIO=$!
+python - <<'PY'
+import time, urllib.request
+for _ in range(60):
+    try:
+        page = urllib.request.urlopen("http://127.0.0.1:8791/?token=smoke", timeout=2).read()
+        runs = urllib.request.urlopen("http://127.0.0.1:8791/api/runs?token=smoke").read()
+        assert b'id="root"' in page and b'"runs"' in runs
+        print("studio ok")
+        break
+    except Exception:
+        time.sleep(1)
+else:
+    raise SystemExit("studio did not start")
+PY
+kill $STUDIO
 
 NAME="c2a-$VERSION-linux-$ARCH"
 mv "$WORK/dist/c2a" "$WORK/$NAME"

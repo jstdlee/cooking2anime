@@ -10,7 +10,8 @@ These rules are binding. A PR that breaks one does not merge.
 | Property | `tests/property` | every PR (1k examples), nightly (10k) | < 90 s | Invariants: timeline, board merge, ownership |
 | Contract | `tests/contract` | every PR | < 60 s | Each provider backend sends and parses the right wire format, using recorded HTTP/WS fixtures (no network) |
 | Integration (fake) | `tests/integration` | every PR | < 4 min | The whole pipeline on fixture clips with fake providers |
-| Board | `tests/board` | every PR (file level + real GoDraw on Linux/Xvfb) | < 3 min | `.tldr` validity, simulated user edits, real-app e2e |
+| Studio API | `tests/integration/test_studio.py` | every PR | < 2 min | Auth, command validation and idempotency, WebSocket updates, media Range, path safety |
+| Studio e2e | `studio/e2e` (Playwright) | every PR | < 2 min | Real server + headless Chromium: upload, check a key, change style, approve, clips and output play, download |
 | GPU | `tests/gpu` | nightly on the self-hosted GPU runner, and before each release | < 2 h | Real models on fixture clips; VRAM and time budgets |
 | Golden | `tests/golden` | weekly, before each release, and on PRs labelled `quality` | < 6 h | Quality metrics on the golden set vs the frozen baseline |
 
@@ -24,7 +25,7 @@ These rules are binding. A PR that breaks one does not merge.
    only blocks nightly; it must be fixed or deleted within one week.
 3. **Every bug fix comes with a regression test** that fails before the fix. The PR
    template has a checkbox for it.
-4. **Coverage gates** (`tools/coverage_gate.py`, run in CI): `c2a/core`, `c2a/board` and `c2a/prompts` ≥ 90% line and 85%
+4. **Coverage gates** (`tools/coverage_gate.py`, run in CI): `c2a/core`, `c2a/keys`, `c2a/prompts` and `c2a/audio` ≥ 90% line and 85%
    branch; the whole repo ≥ 80%. A PR may not lower coverage of a file it touches.
 5. **Types and lint:** `mypy --strict` and `ruff` pass with zero ignores added unless
    a reason is given inline.
@@ -63,23 +64,23 @@ These rules are binding. A PR that breaks one does not merge.
 - Contract: schema-invalid responses trigger a retry, and the stage fails after 2.
 - Closed vocabularies: an unknown `camera`, `emotion` or `cue` value is rejected.
 
-### Board (`board/*`)
-- Every produced board passes `tools/tldr-validate` (pinned `@tldraw/tlschema`).
-- Property: with random user records (shapes, arrows, notes, pages) mixed in, 100
-  projector writes leave every non-engine record **unchanged (JSON-equal)**.
-- Optimistic write: if the file changes between read and write, the engine retries,
-  and the user's change survives.
-- Reader: sticker inside a candidate frame → approval; sticker on the page or in a
-  non-candidate frame → ignored with a board notice; two stickers → ambiguous, so no
-  approval and a notice; prompt note edited → override recorded with the board hash.
-- Rebuild: deleting `board.tldr` and running `c2a board rebuild` gives the same
-  engine-owned records.
-- Real GoDraw (every PR, Linux under Xvfb, pinned commit): open → drag the sticker over
-  the automation socket → approval within 3 s; edit a prompt note → override recorded;
-  engine status writes are picked up while the app is open. A macOS and Windows manual
-  checklist is signed off once per release.
-- `▶ open` links point at the local clip server, which serves only media files from the
-  run folder (no listing, no `..`).
+### Key images (`keys/*`, `stages/keys.py`, `stages/tag.py`)
+- Synthetic clips with known direction changes and stops: candidates within ±2 frames
+  (property-tested over random segment lengths); steady sub-pixel motion gives no keys;
+  min gap respected; shot starts locked; the image is the sharpest frame nearby; gaps
+  longer than the clip limit are filled.
+- Tags: closed vocabularies; edits validated and limited to editable fields.
+
+### Keep-voice (`audio/voice.py`)
+- Same-length clips keep each phrase's offset from its key image; within ±15% the offset
+  and tempo scale; shorter clips cut after the last whole word; a phrase never crosses
+  into the next clip; the energy word timer finds bursts within 20 ms.
+
+### Studio (`studio/server.py`, `studio/`)
+- Every endpoint and the WebSocket require the token; unknown commands, bad arguments
+  and invalid values are rejected (400/409); `op_id` makes commands idempotent; media
+  is allow-listed, Range-capable, and cannot escape the run folder.
+- Playwright end to end on the real server (see the table above).
 
 ### Providers
 - Contract test per backend: request shape, auth header, retry on 429/5xx with
@@ -137,8 +138,14 @@ These rules are binding. A PR that breaks one does not merge.
 ## 5. CI pipeline
 
 ```
-PR:      ruff → mypy → unit → property(1k) → contract → integration-fake → board(file + real GoDraw/Xvfb) → coverage gate
+PR:      frontend build (tsc + vite) → ruff → mypy → pytest -n auto (unit, property, integration, Studio API, CLI) → coverage gate → Playwright e2e
 nightly: property(10k) → gpu
 weekly / release / label:quality: golden → human-eval checklist (release only)
 ```
 `main` is protected: every PR job is required, plus one review.
+
+## 6. Measured (v0.2.0)
+
+Full PR suite: 134 pytest tests in 4m51s with `-n 4` (4 cores), plus 3 Playwright tests
+in about 40 s. Coverage: total 94%; strict areas 96–98% line, 89–91% branch. Stage-heavy
+integration tests use a 2×2 sample grid; the default 3×3 grid is exercised by the e2e test.

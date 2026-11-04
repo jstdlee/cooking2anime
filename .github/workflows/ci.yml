@@ -9,9 +9,6 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  GODRAW_COMMIT: 03717388cddebd320b4d4949011340e74c9091cf  # keep in sync with configs/default.yaml
-
 jobs:
   test:
     name: test (${{ matrix.runner }})
@@ -22,14 +19,12 @@ jobs:
         # (e.g. ubuntu-24.04-arm for public repos, or a larger/self-hosted runner label).
         runner: ${{ fromJSON(vars.ARM64_RUNNER && format('["ubuntu-24.04","{0}"]', vars.ARM64_RUNNER) || '["ubuntu-24.04"]') }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
-      - name: System packages (ffmpeg, Xvfb, GTK for GoDraw)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg xvfb libgtk-3-0t64 libayatana-appindicator3-1 >/dev/null
+      - name: System packages
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
 
       - uses: actions/setup-python@v5
         with:
@@ -39,18 +34,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: studio/package-lock.json
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.24"
-          cache: false
+      - name: Studio frontend (type-check + build into the package)
+        working-directory: studio
+        run: npm ci --no-audit --no-fund && npm run build
 
       - name: Python deps
         run: pip install -e ".[dev]"
-
-      - name: tldraw schema validator (pinned @tldraw/tlschema)
-        working-directory: tools/tldr-validate
-        run: npm ci --no-audit --no-fund
 
       - name: Lint
         run: ruff check c2a tests tools
@@ -58,34 +50,27 @@ jobs:
       - name: Types
         run: mypy
 
-      - name: Build GoDraw (e2e build, pinned commit)
-        env:
-          GOTOOLCHAIN: auto
-        run: |
-          git clone -q https://github.com/egoist/godraw.git "$RUNNER_TEMP/godraw"
-          git -C "$RUNNER_TEMP/godraw" checkout -q "$GODRAW_COMMIT"
-          (cd "$RUNNER_TEMP/godraw" && CGO_ENABLED=0 go build -tags e2e -o "$RUNNER_TEMP/godraw-e2e" .)
-          echo "C2A_GODRAW_E2E=$RUNNER_TEMP/godraw-e2e" >> "$GITHUB_ENV"
-
-      - name: Tests (unit, property, contract, integration-fake, board, real GoDraw)
-        env:
-          C2A_REQUIRE_NODE: "1"
-        run: |
-          xvfb-run -a -s "-screen 0 1600x1000x24" \
-            python -m pytest tests -q --cov --cov-report=json:coverage.json \
-              --basetemp="$RUNNER_TEMP/pytest" -p no:cacheprovider
+      - name: Tests (unit, property, integration, Studio API, CLI)
+        run: python -m pytest tests -q -n auto --cov --cov-report=json:coverage.json -p no:cacheprovider
 
       - name: Coverage gates
         run: python tools/coverage_gate.py coverage.json
 
-      - name: Upload test artifacts (GoDraw screenshots, boards)
+      - name: Studio end-to-end (Playwright, real server, fake stack)
+        working-directory: studio
+        env:
+          C2A_PYTHON: python
+        run: |
+          npx playwright install --with-deps chromium >/dev/null
+          npx playwright test
+
+      - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-artifacts-${{ matrix.runner }}
           path: |
-            ${{ runner.temp }}/pytest/test_drag_sticker_in_godraw_ap0/*.png
-            ${{ runner.temp }}/pytest/test_drag_sticker_in_godraw_ap0/godraw.log
+            studio/test-results
             coverage.json
           if-no-files-found: ignore
           retention-days: 14
