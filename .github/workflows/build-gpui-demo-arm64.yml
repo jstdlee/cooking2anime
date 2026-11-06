@@ -44,9 +44,9 @@ jobs:
         run: |
           sudo ./ci/cross-setup-arm64.sh
           rustup target add aarch64-unknown-linux-gnu
-          # host (amd64) libraries for the unit tests below
+          # host (amd64) libraries for the unit tests below; nasm builds the x86 AV1 decoder (rav1d)
           sudo apt-get install -y -qq --no-install-recommends libxkbcommon-dev libxkbcommon-x11-dev \
-            libxcb1-dev libasound2-dev libfontconfig-dev libfreetype-dev libwayland-dev >/dev/null
+            libxcb1-dev libasound2-dev libfontconfig-dev libfreetype-dev libwayland-dev nasm >/dev/null
 
       - name: Unit tests (host)
         run: cargo test --locked --bin c2a-review
