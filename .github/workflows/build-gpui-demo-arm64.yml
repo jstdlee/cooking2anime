@@ -1,0 +1,76 @@
+name: build gpui demo (linux-arm64)
+
+# The GPUI Kit research demo (research/gpui-kit-demo): c2a-review and canvas_bench,
+# cross-compiled for linux/arm64 on an x86_64 runner (no arm64 runner needed), smoke-tested
+# under QEMU, and published as a GitHub pre-release tagged gpui-demo-v<Cargo version>.
+# A release is created only when that tag does not exist yet: bump `version` in
+# research/gpui-kit-demo/Cargo.toml to publish a new one. Engine releases (v*) are separate.
+
+on:
+  push:
+    branches: ["claude/research-gpui-kit-demo"]
+    paths:
+      - "research/gpui-kit-demo/**"
+      - ".github/workflows/build-gpui-demo-arm64.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: c2a-review (linux-arm64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: research/gpui-kit-demo
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: v
+        run: echo "version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            research/gpui-kit-demo/target
+          key: gpui-demo-arm64-${{ hashFiles('research/gpui-kit-demo/Cargo.lock') }}
+          restore-keys: gpui-demo-arm64-
+
+      - name: Cross toolchain and arm64 libraries
+        run: sudo ./ci/cross-setup-arm64.sh && rustup target add aarch64-unknown-linux-gnu
+
+      - name: Unit tests (host)
+        run: cargo test --locked --bin c2a-review
+
+      - name: Build and package (arm64)
+        run: ./ci/build-arm64.sh "${{ steps.v.outputs.version }}"
+
+      - name: Smoke test under QEMU (prints usage, needs no display)
+        run: |
+          sudo apt-get install -y -qq qemu-user >/dev/null
+          out=$(qemu-aarch64 -L /usr/aarch64-linux-gnu dist/c2a-review-*-linux-arm64/c2a-review 2>&1 || true)
+          echo "$out"
+          grep -q "usage: c2a-review" <<<"$out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c2a-review-linux-arm64
+          path: research/gpui-kit-demo/dist/*.tar.gz*
+          if-no-files-found: error
+
+      - name: Publish pre-release (once per version)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: gpui-demo-v${{ steps.v.outputs.version }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "$TAG already released; bump the version in Cargo.toml to publish again"
+            exit 0
+          fi
+          gh release create "$TAG" dist/*.tar.gz dist/*.sha256 --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --prerelease --title "c2a-review (GPUI Kit demo) $TAG" \
+            --notes "Research demo from \`research/gpui-kit-demo\` (branch \`claude/research-gpui-kit-demo\`): native video review, image canvas and AI operations on GPUI Kit, plus the canvas benchmark. Linux arm64, glibc 2.39+ (Ubuntu 24.04 / DGX OS 7). See INSTALL.txt in the archive for runtime packages and usage."
