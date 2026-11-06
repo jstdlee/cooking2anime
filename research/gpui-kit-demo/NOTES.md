@@ -64,6 +64,68 @@ sends `POST /api/runs/{id}/commands`. These calls go through `c2a.app`, as the C
    never moved. Fix: run the playback tick with `spawn_in(window)` / `update_in`, so it
    always gets its own window.
 
+## Performance: canvas stress test vs tldraw
+
+[`bench/`](bench/README.md) runs one scripted session on both stacks:
+- N image cards and a 1080p video playing;
+- pan, then zoom out to 0.08× (most cards on screen);
+- drag 200 selected cards;
+- duplicate them 8 times (+1600 cards).
+
+Measured in the cloud container: 4 vCPU, **no GPU**. Both stacks draw in software
+(Mesa lavapipe for GPUI, SwiftShader/Skia for Chromium).
+
+The key number is **UI-thread CPU per frame**. That is the work no GPU can take over:
+- for GPUI: layout and building the frame;
+- for tldraw: JS, React and the DOM.
+
+At 60 fps the budget is 16.7 ms.
+
+| UI-thread ms per frame | GPUI (culled), 1k cards | tldraw, 1k cards | GPUI (culled), 5k cards | tldraw, 5k cards |
+|---|---|---|---|---|
+| idle | 2.3 | 0.5 | 2.5 | 0.7 |
+| pan | 2.6 | 7.0 | 2.6 | 10.2 |
+| zoom out to 0.08× | 7.7 | 18.9 | 9.2 | 33.5 |
+| drag 200 cards | 4.6 | 17.7 | 5.0 | 42.6 |
+| duplicate 200 cards ×8 | 14.6 | 62.7 | 15.2 | 233 |
+
+| What you see in tldraw (frames are paced by Chromium at 60 Hz) | 1k cards | 5k cards |
+|---|---|---|
+| zoom out: fps / worst frame | 33 / 233 ms | 21 / 367 ms |
+| drag: fps / worst frame | 54 / 33 ms | 23 / 100 ms |
+| duplicate: fps / worst frame | 11 / 350 ms | 3.3 / 483 ms |
+| memory (all Chromium processes) | 1.75 GB | 2.1 GB |
+
+**Results:**
+- **GPUI's UI-thread work stays under the 60 fps budget in every phase, and barely
+  changes from 1k to 5k cards (6.6k after duplication).**
+- tldraw is fine for idle and pan. With 1k+ cards it misses the budget on zoom-out,
+  drag and duplicate, and the misses grow with the card count: 4× slower than GPUI
+  on drag at 1k, 8× at 5k, and 15× on duplicate at 5k.
+- tldraw also refuses more than **4000 shapes per page by default** (`maxShapesPerPage`).
+  The 5k run had to raise that limit.
+- Memory: GPUI uses 0.7–0.78 GB for the same scene (500 decoded thumbnails, the video, and
+  the software rasterizer), against 1.75–2.1 GB for Chromium.
+- **Culling is required in GPUI.** Without it, every card is laid out each frame and the UI
+  thread needs 48 ms per frame at 5k cards. With a 5-line viewport check it needs 2.5 ms.
+  tldraw culls internally. A real app also needs a spatial index for hit testing.
+
+**What this container cannot show:**
+- **GPUI's real frame rate.** GPUI is held at about 21 fps here even with an empty window,
+  because its presentation through software Vulkan under Xvfb is paced at 48 ms. Mesa's
+  `llvmpipe` threads use 0.7–2 cores to rasterize every frame. On a real GPU that work
+  moves to the GPU, which is GPUI's main advantage, but it is **not measured yet**.
+- **GPUI's video smoothness.** The decoder kept up (ffmpeg used about 0.35 cores), but the
+  display was capped by the same pacing. Chromium showed the 1080p clip with 0 dropped frames.
+
+**Fairness notes:**
+- tldraw's duplicate also does more work: undo history, bindings and indexes.
+- GPUI's figures are for a bare canvas. Undo, hit testing and saving would add UI-thread
+  work, but in code we control and can optimize.
+
+**Next check:** one run of `bench/run-all.sh` on a desktop with a GPU (macOS Metal, or Linux
+with a real Vulkan driver), to confirm the frame rate and video smoothness.
+
 ## Compared with the tldraw Studio (v0.2.0)
 
 | | GPUI Kit native app | tldraw web Studio |
@@ -76,15 +138,25 @@ sends `POST /api/runs/{id}/commands`. These calls go through `c2a.app`, as the C
 
 ## Recommendation
 
-**Keep tldraw as the Studio.** It covers the free-form board (notes, arrows, layout) that
-GPUI would make us rebuild.
+**If the product needs a large canvas** (thousands of images, with bulk move, duplicate
+and zoom-out while video plays), **GPUI Kit is feasible and the stronger base.** On the
+same scripted session, its UI-thread work was 3–15× lower than tldraw's. It stayed within
+the 60 fps budget at 5k+ cards, where tldraw dropped to 3–23 fps. It also used about a third
+of the memory.
 
-**Adopt GPUI Kit only for a focused native "review" window**, launched as `c2a review` next
-to the Studio, if users need frame-accurate side-by-side playback or long 1080p clips the
-browser struggles with. It costs little, because all logic stays in the engine and both
-front ends speak the same `/api/runs` contract.
+The costs are known and bounded:
+- we build the canvas features ourselves: culling and a spatial index from day one, then
+  selection, undo and saving;
+- we maintain the video port, which must follow each GPUI Kit bump.
 
-Before adopting it:
-- move the video port into its own crate, pinned with GPUI Kit;
-- add an Xvfb + lavapipe screenshot job to CI;
-- check macOS (Metal) and Windows builds.
+**For a small board** (tens to hundreds of cards: today's Studio), tldraw remains the
+faster path to features and is not a bottleneck.
+
+Before committing:
+1. Run `bench/run-all.sh` once on real GPU hardware (Mac, or Linux with a Vulkan driver)
+   to confirm frame rate and video smoothness.
+2. Move the video port into its own crate, pinned with GPUI Kit.
+3. Add an Xvfb + lavapipe screenshot job to CI.
+4. Check macOS (Metal) and Windows builds.
+
+Both front ends speak the same `/api/runs` contract, so the engine does not change either way.
