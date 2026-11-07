@@ -25,7 +25,7 @@ use std::time::Duration;
 use gpui_kit::component::button::*;
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
-use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _};
+use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Disableable as _, Sizable as _};
 use gpui_kit::*;
 use gpui_kit::prelude::FluentBuilder as _;
 use serde_json::json;
@@ -486,12 +486,12 @@ impl RunView {
             .child(div().text_sm().child("Director's language"))
             .child(h_flex().gap_1().flex_wrap().children(directors.into_iter().map(|(name, title)| {
                 let sel = current.as_deref() == Some(&name[..]);
-                Button::new(SharedString::from(format!("dir-{name}"))).small().outline().selected(sel).label(title)
+                Button::new(SharedString::from(format!("dir-{name}"))).small().with_variant(if sel { ButtonVariant::Primary } else { ButtonVariant::Secondary }).label(title)
                     .on_click(cx.listener(move |this, _, _, cx| this.command("set_style", json!({"director": name.clone()}), cx)))
             })))
             .child(div().text_sm().child("Sound"))
             .child(h_flex().gap_1().children(["regenerate", "keep_voice", "silent"].into_iter().map(|m| {
-                Button::new(SharedString::from(format!("audio-{m}"))).small().outline().selected(v.audio_mode == m).label(m.replace('_', " "))
+                Button::new(SharedString::from(format!("audio-{m}"))).small().with_variant(if v.audio_mode == m { ButtonVariant::Primary } else { ButtonVariant::Secondary }).label(m.replace('_', " "))
                     .on_click(cx.listener(move |this, _, _, cx| this.command("set_audio", json!({"mode": m}), cx)))
             })));
         panel
@@ -1145,7 +1145,7 @@ impl Shell {
         let layer = |id: &'static str, title: &'static str, items: Vec<(String, String)>, chosen: Option<String>, cx: &mut Context<Self>| {
             v_flex().gap_2().child(ui::label(title, cx)).child(h_flex().gap_2().flex_wrap().children(items.into_iter().map(|(name, label)| {
                 let on = chosen.as_deref() == Some(name.as_str());
-                Button::new(SharedString::from(format!("{id}-{name}"))).small().outline().selected(on).label(label)
+                Button::new(SharedString::from(format!("{id}-{name}"))).small().with_variant(if on { ButtonVariant::Primary } else { ButtonVariant::Secondary }).label(label)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let slot = match id { "anim" => &mut this.new_run.animation, "dir" => &mut this.new_run.director, _ => &mut this.new_run.finish };
                         *slot = if slot.as_deref() == Some(name.as_str()) { None } else { Some(name.clone()) };
@@ -1170,11 +1170,11 @@ impl Shell {
         col = col.child(ui::section("3 · Output and sound", "", cx)
             .child(h_flex().gap_6()
                 .child(v_flex().gap_2().child(ui::label("Resolution", cx)).child(h_flex().gap_2().children(["720p", "1080p"].into_iter().map(|r| {
-                    Button::new(SharedString::from(format!("res-{r}"))).small().outline().selected(res == r).label(r)
+                    Button::new(SharedString::from(format!("res-{r}"))).small().with_variant(if res == r { ButtonVariant::Primary } else { ButtonVariant::Secondary }).label(r)
                         .on_click(cx.listener(move |this, _, _, cx| { this.new_run.resolution = r; cx.notify(); }))
                 }))))
                 .child(v_flex().gap_2().child(ui::label("Sound", cx)).child(h_flex().gap_2().children([("regenerate", "New foley + voice sounds"), ("keep_voice", "Keep the voice"), ("silent", "Silent")].into_iter().map(|(m, l)| {
-                    Button::new(SharedString::from(format!("aud-{m}"))).small().outline().selected(audio == m).label(l)
+                    Button::new(SharedString::from(format!("aud-{m}"))).small().with_variant(if audio == m { ButtonVariant::Primary } else { ButtonVariant::Secondary }).label(l)
                         .on_click(cx.listener(move |this, _, _, cx| { this.new_run.audio = m; cx.notify(); }))
                 }))))));
         if let Some(n) = self.render_notice() {
@@ -1211,7 +1211,7 @@ impl Shell {
             let base_now = f.vlm_base.read(cx).value().to_string();
             let mut vlm = ui::section("Vision LLM", "Watches each key moment and tags the action, motion, camera and mood; also checks for on-screen text. Any OpenAI-compatible API with image input.", cx)
                 .child(h_flex().gap_2().flex_wrap().children(settings::VLM_PRESETS.iter().enumerate().map(|(i, p)| {
-                    Button::new(SharedString::from(format!("preset-{i}"))).small().outline().selected(base_now == p.base_url).label(p.name)
+                    Button::new(SharedString::from(format!("preset-{i}"))).small().with_variant(if base_now == p.base_url { ButtonVariant::Primary } else { ButtonVariant::Secondary }).label(p.name)
                         .on_click(cx.listener(move |this, _, window, cx| this.apply_preset(i, window, cx)))
                 })));
             let hint = settings::VLM_PRESETS.iter().find(|p| p.base_url == base_now).map(|p| p.key_hint).unwrap_or("your provider's console");
@@ -1225,7 +1225,7 @@ impl Shell {
             let comfy = backend == "comfyui";
             let mut video = ui::section("Video generation", "Animates each approved key image with Wan 2.2 image-to-video.", cx)
                 .child(h_flex().gap_2().children([("fal", "fal.ai (cloud)"), ("comfyui", "ComfyUI on your GPU (e.g. DGX)")].into_iter().map(|(b, l)| {
-                    Button::new(SharedString::from(format!("vb-{b}"))).small().outline().selected(backend == b).label(l)
+                    Button::new(SharedString::from(format!("vb-{b}"))).small().with_variant(if backend == b { ButtonVariant::Primary } else { ButtonVariant::Secondary }).label(l)
                         .on_click(cx.listener(move |this, _, _, cx| { this.form.video_backend = b.into(); cx.notify(); }))
                 })));
             if comfy {
@@ -1242,7 +1242,7 @@ impl Shell {
                 .child(v_flex().gap_1().child(ui::label("API key", cx)).child(Input::new(&f.fal_key)))
                 .when(!comfy, |d| d.child(v_flex().gap_2().child(ui::label("Video quality (480p is faster and cheaper; the result is upscaled either way)", cx))
                     .child(h_flex().gap_2().children(["480p", "720p"].into_iter().map(|r| {
-                        Button::new(SharedString::from(format!("vres-{r}"))).small().outline().selected(res == r).label(r)
+                        Button::new(SharedString::from(format!("vres-{r}"))).small().with_variant(if res == r { ButtonVariant::Primary } else { ButtonVariant::Secondary }).label(r)
                             .on_click(cx.listener(move |this, _, _, cx| { this.form.video_resolution = r.into(); cx.notify(); }))
                     })))))
                 .child(h_flex().gap_3()

@@ -1,6 +1,6 @@
 [package]
 name = "c2a-gpui-demo"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 publish = false
 description = "Research demo: c2a review app (video review, image canvas, AI operations) on GPUI Kit"

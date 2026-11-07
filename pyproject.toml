@@ -1,6 +1,6 @@
 [project]
 name = "cooking2anime"
-version = "0.2.0"
+version = "0.3.0"
 description = "Remake cooking videos as Japanese anime: prompt-driven, one human approval on a GoDraw canvas."
 readme = "README.md"
 requires-python = ">=3.12"
