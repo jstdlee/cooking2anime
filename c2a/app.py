@@ -244,14 +244,23 @@ def doctor(cfg: Config, live: bool = False) -> list[dict[str, Any]]:
             except C2AError as e:
                 add("vision model answers", False, str(e),
                     "check the key, the model name and the base URL")
-        key(f.api_key_env, "fal.ai · restyle, video, foley")
+        comfy = cfg.generate.backend == "comfyui"
+        key(f.api_key_env, "fal.ai · restyle, foley" + ("" if comfy else ", video"))
+        if comfy:
+            from c2a.providers.comfyui import ComfyVideo
+
+            for name, ok, detail in ComfyVideo(cfg).check():
+                add(name, ok, detail, "start ComfyUI on the GPU machine "
+                    "(scripts/comfyui/setup_wan22.sh) and set its URL in Settings")
         voice = cfg.audio.voice.enabled and cfg.audio.mode == "regenerate"
         key(fish.api_key_env, f"Fish Audio · {cfg.audio.voice.model} voice sounds", needed=voice)
     try:
         from c2a.providers.registry import build_stack
 
         build_stack(cfg)
-        add("ready", True, f"the {stack} stack can run")
+        bad = [c["name"] for c in checks if not c["ok"]]
+        add("ready", not bad, f"the {stack} stack can run" if not bad
+            else "not yet: " + ", ".join(bad))
     except C2AError as e:
         add("ready", False, str(e), "fix the items above")
     return checks

@@ -614,6 +614,8 @@ struct SettingsForm {
     mode: settings::Mode,
     voice_enabled: bool,
     video_resolution: String,
+    video_backend: String,
+    comfy_url: Entity<InputState>,
     vlm_base: Entity<InputState>,
     vlm_model: Entity<InputState>,
     vlm_key: Entity<InputState>,
@@ -642,6 +644,8 @@ struct Shell {
     /// "uploading …" while a new run is being created.
     busy: Option<String>,
     path_box: Entity<InputState>,
+    /// The last "Save and check" result: Some(true) when every check passed.
+    verified: Option<bool>,
     new_run: NewRunForm,
     form: SettingsForm,
     _tasks: Vec<Task<()>>,
@@ -690,7 +694,7 @@ impl Shell {
         let mut this = Self {
             settings, workdir, engine: Engine::Off(String::new()), c2a: None, runs: Vec::new(),
             catalog: studio::Catalog::default(), page: if first_launch { Page::Settings } else { Page::Runs },
-            open: None, notice: None, busy: None, path_box,
+            open: None, notice: None, busy: None, path_box, verified: None,
             new_run: NewRunForm { video: None, animation: None, director: None, finish: None, resolution: "720p", audio: "regenerate" },
             form, _tasks: tasks,
         };
@@ -710,6 +714,8 @@ impl Shell {
             mode: s.mode,
             voice_enabled: s.voice_enabled,
             video_resolution: s.fal_video_resolution.clone(),
+            video_backend: s.video_backend.clone(),
+            comfy_url: input(window, cx, &s.comfy_url, "http://dgx:8188", false),
             vlm_base: input(window, cx, &s.vlm_base_url, "https://…/v1/", false),
             vlm_model: input(window, cx, &s.vlm_model, "model name", false),
             vlm_key: input(window, cx, &s.vlm_key, "API key", true),
@@ -800,8 +806,15 @@ impl Shell {
             Engine::Off(_) => ("engine off — see Settings".into(), ui::RED),
             Engine::Starting => ("engine starting…".into(), ui::AMBER),
             Engine::Ours(_) | Engine::External(_) => {
-                let missing = self.settings.missing();
-                if missing.is_empty() { (format!("{mode} · ready"), ui::GREEN) } else { (format!("{mode} · needs keys"), ui::AMBER) }
+                if self.settings.mode == settings::Mode::Demo {
+                    return (format!("{mode} · ready"), ui::GREEN);
+                }
+                match (self.settings.missing().is_empty(), self.verified) {
+                    (false, _) => (format!("{mode} · needs keys"), ui::AMBER),
+                    (true, Some(true)) => (format!("{mode} · ready"), ui::GREEN),
+                    (true, Some(false)) => (format!("{mode} · check failed"), ui::RED),
+                    (true, None) => (format!("{mode} · not checked yet"), ui::AMBER),
+                }
             }
         }
     }
@@ -946,6 +959,8 @@ impl Shell {
         s.mode = f.mode;
         s.voice_enabled = f.voice_enabled;
         s.fal_video_resolution = f.video_resolution.clone();
+        s.video_backend = f.video_backend.clone();
+        s.comfy_url = v(&f.comfy_url, cx);
         s.vlm_base_url = v(&f.vlm_base, cx);
         s.vlm_model = v(&f.vlm_model, cx);
         s.vlm_key = v(&f.vlm_key, cx);
@@ -970,6 +985,7 @@ impl Shell {
                     Engine::Off(why) => {
                         let _ = this.update(cx, |t, cx| {
                             t.form.checking = false;
+                            t.verified = Some(false);
                             t.form.checks = vec![studio::Check { name: "engine".into(), ok: false, detail: why, fix: "Locate c2a… below".into() }];
                             cx.notify();
                         });
@@ -980,7 +996,10 @@ impl Shell {
                         let _ = this.update(cx, |t, cx| {
                             t.form.checking = false;
                             match got {
-                                Ok(checks) => t.form.checks = checks,
+                                Ok(checks) => {
+                                    t.verified = Some(checks.iter().all(|c| c.ok));
+                                    t.form.checks = checks;
+                                }
                                 Err(e) => t.form.checks = vec![studio::Check { name: "engine".into(), ok: false, detail: format!("{e:#}"), fix: String::new() }],
                             }
                             cx.notify();
@@ -1101,7 +1120,7 @@ impl Shell {
         let demo = self.settings.mode == settings::Mode::Demo;
         let missing = self.settings.missing();
         let video = self.new_run.video.clone();
-        let mut col = v_flex().gap_4().max_w(px(920.))
+        let mut col = v_flex().w_full().gap_4().max_w(px(920.))
             .child(v_flex().gap_1()
                 .child(div().text_2xl().font_weight(FontWeight::BOLD).child("New run"))
                 .child(div().text_sm().text_color(ui::rgb(ui::MUTED)).child("Choose a cooking video and a look. The AI finds the key moments and makes style samples; you approve one, then it animates the whole video.")));
@@ -1171,20 +1190,20 @@ impl Shell {
         let first = !self.settings.configured;
         let f = &self.form;
         let cloud = f.mode == settings::Mode::Cloud;
-        let mut col = v_flex().gap_4().max_w(px(920.))
+        let mut col = v_flex().w_full().gap_4().max_w(px(920.))
             .child(v_flex().gap_1()
                 .child(div().text_2xl().font_weight(FontWeight::BOLD).child(if first { "Welcome — set up the AI" } else { "Settings" }))
                 .child(div().text_sm().text_color(ui::rgb(ui::MUTED)).child("c2a uses three cloud services: a vision LLM watches your video, fal.ai draws and animates, Fish Audio adds voice sounds. Keys stay on this computer (~/.config/c2a-review, readable only by you).")));
         // mode
         let mode_btn = |id: &'static str, title: &'static str, sub: &'static str, m: settings::Mode, on: bool, cx: &mut Context<Self>| {
-            v_flex().id(id).flex_1().gap_1().p_4().rounded_xl().cursor_pointer().border_1()
+            v_flex().id(id).flex_1().min_w_0().gap_1().p_4().rounded_xl().cursor_pointer().border_1()
                 .border_color(if on { ui::rgb(ui::ACCENT) } else { ui::rgb(ui::LINE) })
                 .bg(if on { ui::tint(ui::ACCENT, 0.10) } else { ui::rgb(ui::CARD) })
                 .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
                 .child(div().text_sm().text_color(ui::rgb(ui::MUTED)).child(sub))
                 .on_click(cx.listener(move |this, _, _, cx| { this.form.mode = m; cx.notify(); }))
         };
-        col = col.child(h_flex().gap_3()
+        col = col.child(h_flex().w_full().gap_3()
             .child(mode_btn("mode-cloud", "Cloud AI", "Real anime restyle, animation and sound. Needs API keys; you pay the providers per use.", settings::Mode::Cloud, cloud, cx))
             .child(mode_btn("mode-demo", "Demo", "No AI and no keys: instant stand-in results, to learn the app.", settings::Mode::Demo, !cloud, cx)));
         if cloud {
@@ -1201,18 +1220,34 @@ impl Shell {
                     .child(v_flex().w(px(260.)).gap_1().child(ui::label("Model", cx)).child(Input::new(&f.vlm_model))))
                 .child(v_flex().gap_1().child(ui::label(&format!("API key · get one at {hint}"), cx)).child(Input::new(&f.vlm_key)));
             col = col.child(vlm);
+            // video generation: fal.ai or your own GPU
+            let backend = f.video_backend.clone();
+            let comfy = backend == "comfyui";
+            let mut video = ui::section("Video generation", "Animates each approved key image with Wan 2.2 image-to-video.", cx)
+                .child(h_flex().gap_2().children([("fal", "fal.ai (cloud)"), ("comfyui", "ComfyUI on your GPU (e.g. DGX)")].into_iter().map(|(b, l)| {
+                    Button::new(SharedString::from(format!("vb-{b}"))).small().outline().selected(backend == b).label(l)
+                        .on_click(cx.listener(move |this, _, _, cx| { this.form.video_backend = b.into(); cx.notify(); }))
+                })));
+            if comfy {
+                video = video
+                    .child(v_flex().gap_1().child(ui::label("ComfyUI URL (Wan 2.2 installed by scripts/comfyui/setup_wan22.sh)", cx)).child(Input::new(&f.comfy_url)))
+                    .child(div().text_xs().text_color(ui::rgb(ui::MUTED)).child("“Save and check” verifies the server and that the Wan 2.2 model files are there."));
+            }
+            col = col.child(video);
             // fal.ai
             let res = f.video_resolution.clone();
-            col = col.child(ui::section("fal.ai — restyle, animation, foley", "Draws the anime frames (Nano Banana), animates them (Wan 2.2) and makes sound effects (MMAudio). Key: fal.ai/dashboard/keys.", cx)
+            col = col.child(ui::section(if comfy { "fal.ai — restyle and foley" } else { "fal.ai — restyle, animation, foley" },
+                if comfy { "Draws the anime frames (Nano Banana) and makes sound effects (MMAudio). Key: fal.ai/dashboard/keys." }
+                else { "Draws the anime frames (Nano Banana), animates them (Wan 2.2) and makes sound effects (MMAudio). Key: fal.ai/dashboard/keys." }, cx)
                 .child(v_flex().gap_1().child(ui::label("API key", cx)).child(Input::new(&f.fal_key)))
-                .child(v_flex().gap_2().child(ui::label("Video quality (480p is faster and cheaper; the result is upscaled either way)", cx))
+                .when(!comfy, |d| d.child(v_flex().gap_2().child(ui::label("Video quality (480p is faster and cheaper; the result is upscaled either way)", cx))
                     .child(h_flex().gap_2().children(["480p", "720p"].into_iter().map(|r| {
                         Button::new(SharedString::from(format!("vres-{r}"))).small().outline().selected(res == r).label(r)
                             .on_click(cx.listener(move |this, _, _, cx| { this.form.video_resolution = r.into(); cx.notify(); }))
-                    }))))
+                    })))))
                 .child(h_flex().gap_3()
                     .child(v_flex().flex_1().gap_1().child(ui::label("Image model (advanced)", cx)).child(Input::new(&f.fal_image)))
-                    .child(v_flex().flex_1().gap_1().child(ui::label("Video model (advanced)", cx)).child(Input::new(&f.fal_video)))));
+                    .when(!comfy, |d| d.child(v_flex().flex_1().gap_1().child(ui::label("Video model (advanced)", cx)).child(Input::new(&f.fal_video))))));
             // Fish Audio
             let voice = f.voice_enabled;
             let mut fish = ui::section("Fish Audio — voice sounds", "Small non-verbal sounds (a satisfied sigh, a quiet “mm”) where someone is on screen. Never words. Key: fish.audio → API keys.", cx)

@@ -80,6 +80,7 @@ class ClipsCfg(_Model):
 
 class GenerateCfg(_Model):
     model: str = "wan_i2v_14b"
+    backend: Literal["fal", "comfyui"] = "fal"  # where the clips are animated
     max_retries: int = Field(2, ge=0, le=5)
 
 
@@ -138,7 +139,21 @@ class StudioCfg(_Model):
 
 
 class ComfyCfg(_Model):
+    """A ComfyUI server with Wan 2.2 (scripts/comfyui/setup_wan22.sh), for
+    generate.backend = comfyui. File names as in ComfyUI's models/ folders."""
+
     url: str = "http://127.0.0.1:8188"
+    timeout_s: int = Field(1800, ge=60)
+    resolution: Literal["480p", "580p", "720p"] = "480p"
+    wan_high_noise: str = "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"
+    wan_low_noise: str = "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"
+    text_encoder: str = "umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+    vae: str = "wan_2.1_vae.safetensors"
+    steps: int = Field(20, ge=2, le=80)
+    cfg: float = Field(3.5, ge=1, le=10)
+    shift: float = Field(8.0, ge=1, le=20)
+    sampler: str = "euler"
+    scheduler: str = "simple"
 
 
 class FalCfg(_Model):

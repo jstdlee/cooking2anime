@@ -43,6 +43,7 @@ clips:
   per_clip: {}
 generate:
   model: wan_i2v_14b
+  backend: fal  # fal | comfyui (your own GPU: providers.comfyui)
   max_retries: 2
 qa:
   min_style_sim: 0.8
@@ -83,7 +84,19 @@ studio:
   open_browser: true
 providers:
   comfyui:
+    # a ComfyUI server with Wan 2.2 (scripts/comfyui/setup_wan22.sh)
     url: http://127.0.0.1:8188
+    timeout_s: 1800
+    resolution: 480p
+    wan_high_noise: wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors
+    wan_low_noise: wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors
+    text_encoder: umt5_xxl_fp8_e4m3fn_scaled.safetensors
+    vae: wan_2.1_vae.safetensors
+    steps: 20
+    cfg: 3.5
+    shift: 8.0
+    sampler: euler
+    scheduler: simple
   fal:
     api_key_env: FAL_KEY
     max_parallel: 6

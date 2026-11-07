@@ -72,12 +72,15 @@ class Http:
         self.send, self.retries, self.backoff_s, self.sleep = send, retries, backoff_s, sleep
 
     def request(self, method: str, url: str, headers: dict[str, str] | None = None,
-                body: Any = None, timeout: float = 120, raw: bool = False) -> Response:
+                body: Any = None, timeout: float = 120, data: bytes | None = None,
+                content_type: str | None = None) -> Response:
+        """`body` is sent as JSON; `data` (with `content_type`) as raw bytes."""
         hdrs = {"User-Agent": "c2a", **(headers or {})}
-        data: bytes | None = None
         if body is not None:
             data = json.dumps(body).encode()
             hdrs["Content-Type"] = "application/json"
+        elif data is not None and content_type:
+            hdrs["Content-Type"] = content_type
         last = ""
         for attempt in range(self.retries + 1):
             try:
@@ -100,14 +103,19 @@ def _short(url: str) -> str:
 
 
 def _detail(r: Response) -> str:
+    """The provider's error message (OpenAI, fal, Gemini — which wraps it in a list — …)."""
     try:
-        v = json.loads(r.body)
+        v: Any = json.loads(r.body)
+    except ValueError:
+        return r.body[:300].decode("utf-8", "replace")
+    if isinstance(v, list) and v:
+        v = v[0]
+    if isinstance(v, dict):
         d = v.get("detail") or v.get("error") or v.get("message") or v
         if isinstance(d, dict):
             d = d.get("message") or d
-        return str(d)[:300]
-    except ValueError:
-        return r.body[:300].decode("utf-8", "replace")
+        v = d
+    return str(v)[:300]
 
 
 def _key(env: str, what: str) -> str:
@@ -489,7 +497,12 @@ def cloud_stack(cfg: Config, http: Http | None = None) -> Stack:
     http = http or Http()
     fal = Fal(cfg, http)
     vlm = OpenAIVision(cfg, http)
-    return Stack(vlm=vlm, image_edit=FalImageEdit(cfg, fal), video_gen=FalVideo(cfg, fal),
+    video: Any = FalVideo(cfg, fal)
+    if cfg.generate.backend == "comfyui":
+        from c2a.providers.comfyui import ComfyVideo
+
+        video = ComfyVideo(cfg, http)
+    return Stack(vlm=vlm, image_edit=FalImageEdit(cfg, fal), video_gen=video,
                  foley=FalFoley(cfg, fal), voice=FishVoice(cfg, http), asr=FalASR(cfg, fal),
                  ocr=vlm if cfg.providers.cloud_vlm.ocr else NoOCR(),
                  separator=FalSeparator(cfg, fal), word_timer=EnergyWordTimer())
@@ -498,7 +511,8 @@ def cloud_stack(cfg: Config, http: Http | None = None) -> Stack:
 def missing_keys(cfg: Config) -> list[tuple[str, str]]:
     """(env var, what for) for every key the cloud stack needs and does not have."""
     need = [(cfg.providers.cloud_vlm.api_key_env, "vision model (tagging, checks)"),
-            (cfg.providers.fal.api_key_env, "fal.ai (restyle, video, foley)")]
+            (cfg.providers.fal.api_key_env, "fal.ai (restyle, foley"
+             + (")" if cfg.generate.backend == "comfyui" else ", video)"))]
     if cfg.audio.voice.enabled and cfg.audio.mode == "regenerate":
         need.append((cfg.providers.fish.api_key_env, "Fish Audio (voice sounds)"))
     return [(e, w) for e, w in need if not os.environ.get(e, "").strip()]

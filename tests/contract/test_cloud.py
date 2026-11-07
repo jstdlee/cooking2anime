@@ -44,8 +44,9 @@ class Script:
 
     def __call__(self, method: str, url: str, headers: dict[str, str], body: bytes | None,
                  timeout: float) -> Response:
+        is_json = headers.get("Content-Type") == "application/json"
         self.calls.append({"method": method, "url": url, "headers": headers,
-                           "json": json.loads(body) if body else None})
+                           "json": json.loads(body) if body and is_json else None})
         for i, (m, part, resp) in enumerate(self.routes):
             if m == method and part in url:
                 del self.routes[i]
@@ -125,6 +126,14 @@ def test_http_does_not_retry_client_errors_and_reports_the_detail() -> None:
     with pytest.raises(ProviderError, match="422: bad prompt"):
         http(s).request("POST", "https://x", body={})
     assert len(s.calls) == 1
+
+
+def test_http_reports_gemini_style_error_lists() -> None:
+    body = json.dumps([{"error": {"code": 400, "message": "API key not valid.",
+                                  "status": "INVALID_ARGUMENT"}}]).encode()
+    s = Script([("POST", "x", Response(400, body))])
+    with pytest.raises(ProviderError, match="400: API key not valid"):
+        http(s).request("POST", "https://x", body={})
 
 
 def test_http_gives_up_after_the_retries() -> None:

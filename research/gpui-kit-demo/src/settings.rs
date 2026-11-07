@@ -56,6 +56,9 @@ pub struct Settings {
     pub fal_video_resolution: String,
     pub fal_video_model: String,
     pub fal_image_model: String,
+    /// Where clips are animated: "fal" or "comfyui" (your own GPU, e.g. a DGX).
+    pub video_backend: String,
+    pub comfy_url: String,
     // Fish Audio
     pub voice_enabled: bool,
     pub fish_key: String,
@@ -74,6 +77,7 @@ impl Default for Settings {
             fal_key: String::new(), fal_video_resolution: "480p".into(),
             fal_video_model: "fal-ai/wan/v2.2-a14b/image-to-video".into(),
             fal_image_model: "fal-ai/nano-banana/edit".into(),
+            video_backend: "fal".into(), comfy_url: "http://127.0.0.1:8188".into(),
             voice_enabled: true, fish_key: String::new(), voice_model: "drama-3".into(),
             voice_reference: String::new(), configured: false,
         }
@@ -123,6 +127,8 @@ impl Settings {
             fal_video_resolution: s("fal_video_resolution", &d.fal_video_resolution),
             fal_video_model: s("fal_video_model", &d.fal_video_model),
             fal_image_model: s("fal_image_model", &d.fal_image_model),
+            video_backend: s("video_backend", &d.video_backend),
+            comfy_url: s("comfy_url", &d.comfy_url),
             voice_enabled: b("voice_enabled", true),
             fish_key: s("fish_key", ""),
             voice_model: s("voice_model", &d.voice_model),
@@ -140,6 +146,7 @@ impl Settings {
             "vlm_base_url": self.vlm_base_url, "vlm_model": self.vlm_model, "vlm_key": self.vlm_key,
             "fal_key": self.fal_key, "fal_video_resolution": self.fal_video_resolution,
             "fal_video_model": self.fal_video_model, "fal_image_model": self.fal_image_model,
+            "video_backend": self.video_backend, "comfy_url": self.comfy_url,
             "voice_enabled": self.voice_enabled, "fish_key": self.fish_key,
             "voice_model": self.voice_model, "voice_reference": self.voice_reference,
             "configured": self.configured,
@@ -188,12 +195,16 @@ impl Settings {
         let yaml = format!(
             "# written by c2a Review (Settings); edit there\n\
              run:\n  stack: {stack}\n\
+             generate:\n  backend: {}\n\
              providers:\n  cloud_vlm:\n    base_url: {}\n    model: {}\n    api_key_env: C2A_VLM_KEY\n\
              \x20 fal:\n    api_key_env: FAL_KEY\n    video: {}\n    video_resolution: {}\n    image_edit: {}\n\
+             \x20 comfyui:\n    url: {}\n\
              \x20 fish:\n    api_key_env: FISH_API_KEY\n\
              audio:\n  voice:\n    enabled: {}\n    model: {}\n    reference_id: {}\n",
+            if self.video_backend == "comfyui" { "comfyui" } else { "fal" },
             q(&self.vlm_base_url), q(&self.vlm_model), q(&self.fal_video_model),
-            q(&self.fal_video_resolution), q(&self.fal_image_model), self.voice_enabled,
+            q(&self.fal_video_resolution), q(&self.fal_image_model), q(&self.comfy_url),
+            self.voice_enabled,
             q(&self.voice_model),
             if self.voice_reference.trim().is_empty() { "null".into() } else { q(self.voice_reference.trim()) },
         );
@@ -253,6 +264,10 @@ mod tests {
         assert!(!yaml.contains("secret"));
         assert!(yaml.contains("stack: cloud") && yaml.contains("api_key_env: C2A_VLM_KEY"));
         assert!(yaml.contains("reference_id: \"abc\""));
+        assert!(yaml.contains("backend: fal"));
+        let comfy = Settings { video_backend: "comfyui".into(), comfy_url: "http://dgx:8188".into(), ..Settings::default() };
+        let (yaml, _) = comfy.engine_config();
+        assert!(yaml.contains("backend: comfyui") && yaml.contains("url: \"http://dgx:8188\""));
         assert!(env.contains(&("FAL_KEY".into(), "secret-f".into())));
     }
 }
