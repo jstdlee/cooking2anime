@@ -5,14 +5,14 @@
 run:
   workdir: runs
   commercial: false
-  stack: local
+  stack: cloud
 output:
   resolution: 720p
   fps: 24
   codec: h264
   crf: 18
 ingest:
-  shot_detector: transnetv2
+  shot_detector: ffmpeg_scene
   gen_fps: 16
 keys:
   sensitivity: 0.7
@@ -22,7 +22,7 @@ keys:
   auto_check_min: 0.6
   analysis_width: 128
 tag:
-  vlm: qwen_vl
+  vlm: cloud_vlm
   sample_fps: 4
 style:
   selection:
@@ -87,9 +87,24 @@ providers:
   fal:
     api_key_env: FAL_KEY
     max_parallel: 6
+    timeout_s: 900
+    # fal.ai model ids (https://fal.ai/models); any model with the same inputs works
+    image_edit: fal-ai/nano-banana/edit
+    video: fal-ai/wan/v2.2-a14b/image-to-video
+    video_resolution: 480p
+    foley: fal-ai/mmaudio-v2
+    asr: fal-ai/wizper
+    separator: fal-ai/demucs
   fish:
     api_key_env: FISH_API_KEY
     base_url: https://api.fish.audio
     local_url: http://127.0.0.1:8080
   cloud_vlm:
+    # any OpenAI-compatible chat API with image input (Gemini, OpenAI, OpenRouter, Qwen,
+    # a local Ollama or vLLM server...)
     api_key_env: GEMINI_API_KEY
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    model: gemini-2.5-flash
+    timeout_s: 120
+    max_frames: 6
+    ocr: true

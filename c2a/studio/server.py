@@ -37,6 +37,7 @@ from c2a import __version__, app
 from c2a.config import Config
 from c2a.core.errors import C2AError
 from c2a.core.manifest import Run, atomic_write_bytes
+from c2a.prompts.style import catalog
 from c2a.providers.base import Stack
 
 MEDIA_TYPES = {".mp4": "video/mp4", ".png": "image/png", ".jpg": "image/jpeg",
@@ -50,6 +51,11 @@ def command(name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         COMMANDS[name] = fn
         return fn
     return deco
+
+
+@command("resume")
+def _resume(run: Run) -> None:
+    """Continue the pipeline (e.g. after a failure, once keys or settings are fixed)."""
 
 
 @command("toggle_key")
@@ -141,6 +147,7 @@ class Worker:
         self.cancel = threading.Event()
         self.busy = False
         self.last_progress = 0.0
+        self.progress: dict[str, Any] | None = None  # the latest {stage, unit, pct}
         self.thread = threading.Thread(target=self._loop, daemon=True, name=f"c2a-{run.id}")
         self.thread.start()
 
@@ -149,6 +156,7 @@ class Worker:
         self.kicked.set()
 
     def _progress(self, stage: str, unit: str, frac: float) -> None:
+        self.progress = {"stage": stage, "unit": unit, "pct": round(frac * 100, 1)}
         now = time.monotonic()
         if frac in (0.0, 1.0) or now - self.last_progress > 0.25:
             self.last_progress = now
@@ -174,11 +182,13 @@ class Worker:
                                                "text": f"{type(e).__name__}: {e}"})
             finally:
                 self.busy = False
+                self.progress = None
                 self.hub.publish(self.run.id, {"type": "view", "view": self.view()})
 
     def view(self) -> dict[str, Any]:
         v = app.view(self.run)
         v["busy"] = self.busy
+        v["progress"] = self.progress
         return v
 
 
@@ -288,12 +298,14 @@ def create_app(studio: Studio) -> FastAPI:
     @api.get("/api/doctor")
     async def doctor(request: Request) -> JSONResponse:
         authed(request)
-        return JSONResponse({"checks": await asyncio.to_thread(app.doctor, studio.cfg)})
+        live = request.query_params.get("live") in ("1", "true")
+        return JSONResponse({"checks": await asyncio.to_thread(app.doctor, studio.cfg, live)})
 
     @api.get("/api/runs")
     async def runs(request: Request) -> JSONResponse:
         authed(request)
-        return JSONResponse({"runs": app.list_runs(studio.workdir), "version": __version__})
+        return JSONResponse({"runs": app.list_runs(studio.workdir), "version": __version__,
+                             "stack": studio.cfg.run.stack, "catalog": catalog()})
 
     @api.post("/api/runs")
     async def new_run(request: Request, video: UploadFile = File(...),
@@ -327,7 +339,9 @@ def create_app(studio: Studio) -> FastAPI:
         authed(request)
         run = studio.run(run_id)
         v = app.view(run)
-        v["busy"] = studio.workers[run.id].busy if run.id in studio.workers else False
+        w = studio.workers.get(run.id)
+        v["busy"] = w.busy if w else False
+        v["progress"] = w.progress if w else None
         return JSONResponse(v)
 
     @api.post("/api/runs/{run_id}/commands")

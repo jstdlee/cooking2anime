@@ -22,7 +22,7 @@ class _Model(BaseModel):
 class RunCfg(_Model):
     workdir: str = "runs"
     commercial: bool = False
-    stack: Literal["local", "cloud", "fake"] = "local"
+    stack: Literal["local", "cloud", "fake"] = "cloud"
 
 
 class OutputCfg(_Model):
@@ -33,7 +33,7 @@ class OutputCfg(_Model):
 
 
 class IngestCfg(_Model):
-    shot_detector: Literal["transnetv2", "ffmpeg_scene"] = "transnetv2"
+    shot_detector: Literal["transnetv2", "ffmpeg_scene"] = "ffmpeg_scene"
     gen_fps: int = Field(16, gt=0)
 
 
@@ -47,7 +47,7 @@ class KeysCfg(_Model):
 
 
 class TagCfg(_Model):
-    vlm: Literal["qwen_vl", "cloud_vlm"] = "qwen_vl"
+    vlm: Literal["qwen_vl", "cloud_vlm"] = "cloud_vlm"
     sample_fps: int = Field(4, gt=0)
 
 
@@ -144,6 +144,14 @@ class ComfyCfg(_Model):
 class FalCfg(_Model):
     api_key_env: str = "FAL_KEY"
     max_parallel: int = Field(6, ge=1)
+    timeout_s: int = Field(900, ge=30)
+    # fal.ai model ids (https://fal.ai/models); any model with the same inputs works
+    image_edit: str = "fal-ai/nano-banana/edit"
+    video: str = "fal-ai/wan/v2.2-a14b/image-to-video"
+    video_resolution: Literal["480p", "580p", "720p"] = "480p"
+    foley: str = "fal-ai/mmaudio-v2"
+    asr: str = "fal-ai/wizper"
+    separator: str = "fal-ai/demucs"
 
 
 class FishCfg(_Model):
@@ -153,7 +161,15 @@ class FishCfg(_Model):
 
 
 class CloudVlmCfg(_Model):
+    """Any OpenAI-compatible chat API with image input (Gemini, OpenAI, OpenRouter, Qwen,
+    a local Ollama or vLLM server...)."""
+
     api_key_env: str = "GEMINI_API_KEY"
+    base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    model: str = "gemini-2.5-flash"
+    timeout_s: int = Field(120, ge=10)
+    max_frames: int = Field(6, ge=1, le=16)
+    ocr: bool = True  # also check images/clips for on-screen text with this model
 
 
 class ProvidersCfg(_Model):

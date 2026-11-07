@@ -46,14 +46,32 @@ impl Studio {
             .context("runs is not JSON")
     }
 
-    /// Starts a run from a video file (`POST /api/runs`, the web Studio's upload). The file is
-    /// streamed, not read into memory. Returns the new run's id.
-    pub fn create_run(&self, video: &Path) -> Result<String> {
+    /// The engine's checks (`c2a doctor`); `live` also calls the vision model once.
+    pub fn doctor(&self, live: bool) -> Result<Vec<Check>> {
+        let v: Value = self
+            .agent
+            .get(&format!("{}/api/doctor{}", self.base, if live { "?live=1" } else { "" }))
+            .timeout(Duration::from_secs(60))
+            .set("X-C2A-Token", &self.token)
+            .call()
+            .map_err(http_error)?
+            .into_json()
+            .context("doctor is not JSON")?;
+        Ok(v.get("checks").and_then(|c| c.as_array()).map(|cs| cs.iter().map(|c| Check {
+            name: s(c, "name"), ok: c.get("ok").and_then(|x| x.as_bool()).unwrap_or(false),
+            detail: s(c, "detail"), fix: s(c, "fix"),
+        }).collect()).unwrap_or_default())
+    }
+
+    /// Starts a run from a video file (`POST /api/runs`, the web Studio's upload), with
+    /// per-run settings (style, resolution, sound). The file is streamed, not read into
+    /// memory. Returns the new run's id.
+    pub fn create_run(&self, video: &Path, settings: &Value) -> Result<String> {
         use std::io::Read as _;
         let name = video.file_name().map(|n| n.to_string_lossy().replace('"', "")).unwrap_or_else(|| "video.mp4".into());
         let boundary = format!("c2a-review-{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
         let head = format!(
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"settings\"\r\n\r\n{{}}\r\n\
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"settings\"\r\n\r\n{settings}\r\n\
              --{boundary}\r\nContent-Disposition: form-data; name=\"video\"; filename=\"{name}\"\r\n\
              Content-Type: application/octet-stream\r\n\r\n"
         );
@@ -96,6 +114,34 @@ fn http_error(e: ureq::Error) -> anyhow::Error {
             anyhow!("Studio refused ({code}): {detail}")
         }
         other => anyhow!("Studio unreachable: {other}"),
+    }
+}
+
+/// One engine check: what, whether it is fine, and how to fix it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Check {
+    pub name: String,
+    pub ok: bool,
+    pub detail: String,
+    pub fix: String,
+}
+
+/// The style presets: (name, title) per layer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Catalog {
+    pub animation: Vec<(String, String)>,
+    pub director: Vec<(String, String)>,
+    pub finish: Vec<(String, String)>,
+}
+
+impl Catalog {
+    pub fn from_json(v: &Value) -> Self {
+        let layer = |k: &str| -> Vec<(String, String)> {
+            v.get(k).and_then(|d| d.as_array())
+                .map(|ds| ds.iter().map(|d| (s(d, "name"), s(d, "title"))).collect())
+                .unwrap_or_default()
+        };
+        Self { animation: layer("animation"), director: layer("director"), finish: layer("finish") }
     }
 }
 
@@ -143,6 +189,9 @@ pub struct View {
     pub director: Option<String>,
     pub audio_mode: String,
     pub directors: Vec<(String, String)>,
+    /// While the engine works: (stage, unit, percent).
+    pub progress: Option<(String, String, f64)>,
+    pub source: String,
 }
 
 fn s(v: &Value, k: &str) -> String {
@@ -263,6 +312,9 @@ impl View {
                 .unwrap_or("regenerate")
                 .to_string(),
             directors,
+            progress: v.get("progress").filter(|p| p.is_object())
+                .map(|p| (s(p, "stage"), s(p, "unit"), f(p, "pct"))),
+            source: crate::runs::display_name(&s(v, "source")),
         })
     }
 

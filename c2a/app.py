@@ -199,8 +199,9 @@ def rerun(run: Run, clip_id: str) -> list[str]:
 # ---------------------------------------------------------------- doctor
 
 
-def doctor(cfg: Config) -> list[dict[str, Any]]:
-    """Checks with a fix hint each (Studio Doctor panel / `c2a doctor`)."""
+def doctor(cfg: Config, live: bool = False) -> list[dict[str, Any]]:
+    """Checks with a fix hint each (c2a Review settings / Studio Doctor / `c2a doctor`).
+    `live` also calls the vision model once to prove its key and model work."""
     checks: list[dict[str, Any]] = []
 
     def add(name: str, ok: bool, detail: str, fix: str = "") -> None:
@@ -215,25 +216,42 @@ def doctor(cfg: Config) -> list[dict[str, Any]]:
             r = subprocess.run([p, "-version"], capture_output=True, text=True)
             ver = r.stdout.splitlines()[0] if r.stdout else ""
         add(tool, bool(p), ver or "not found", "install it: sudo apt install ffmpeg")
-    gpu = shutil.which("nvidia-smi")
-    if gpu:
-        r = subprocess.run([gpu, "--query-gpu=name,memory.total", "--format=csv,noheader"],
-                           capture_output=True, text=True)
-        add("gpu", r.returncode == 0, r.stdout.strip() or "nvidia-smi failed")
-    else:
-        add("gpu", cfg.run.stack != "local", "no NVIDIA GPU found",
-            "the local stack needs an NVIDIA GPU; use --stack cloud or fake")
-    for env, what in ((cfg.providers.fal.api_key_env, "fal (cloud stack)"),
-                      (cfg.providers.fish.api_key_env, "Fish Audio (voice sounds)"),
-                      (cfg.providers.cloud_vlm.api_key_env, "cloud vision model (tagging)")):
-        have = bool(os.environ.get(env))
-        add(env, have or cfg.run.stack != "cloud", f"{'set' if have else 'not set'} · {what}",
-            f"export {env}=... (only needed for that provider)")
+    stack = cfg.run.stack
+    add("stack", stack != "local", {"cloud": "cloud AI providers", "fake": "demo (no AI: "
+        "deterministic stand-ins)", "local": "local GPU stack (not available yet)"}[stack],
+        "choose the cloud stack (or demo) in Settings")
+    if stack == "cloud":
+        v, f, fish = cfg.providers.cloud_vlm, cfg.providers.fal, cfg.providers.fish
+        host = v.base_url.split("//")[-1].split("/")[0]
+
+        def key(env: str, what: str, needed: bool = True) -> bool:
+            have = bool(os.environ.get(env, "").strip())
+            add(what, have or not needed, f"{env} {'set' if have else 'not set'}"
+                + ("" if needed else " (not needed: voice sounds are off)"),
+                f"add the {env} key in Settings → AI providers")
+            return have
+
+        if key(v.api_key_env, f"vision model · {v.model} @ {host}") and live:
+            try:
+                from c2a.providers.cloud import Http
+
+                Http(retries=1, backoff_s=0.5).request(
+                    "POST", f"{v.base_url.rstrip('/')}/chat/completions",
+                    {"Authorization": f"Bearer {os.environ[v.api_key_env].strip()}"},
+                    {"model": v.model, "max_tokens": 5,
+                     "messages": [{"role": "user", "content": "Reply with OK."}]}, timeout=30)
+                add("vision model answers", True, f"{v.model} replied")
+            except C2AError as e:
+                add("vision model answers", False, str(e),
+                    "check the key, the model name and the base URL")
+        key(f.api_key_env, "fal.ai · restyle, video, foley")
+        voice = cfg.audio.voice.enabled and cfg.audio.mode == "regenerate"
+        key(fish.api_key_env, f"Fish Audio · {cfg.audio.voice.model} voice sounds", needed=voice)
     try:
         from c2a.providers.registry import build_stack
 
         build_stack(cfg)
-        add("stack", True, cfg.run.stack)
+        add("ready", True, f"the {stack} stack can run")
     except C2AError as e:
-        add("stack", False, str(e), "use --stack fake until the real stacks land")
+        add("ready", False, str(e), "fix the items above")
     return checks

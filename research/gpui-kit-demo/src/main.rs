@@ -14,6 +14,7 @@
 
 mod engine;
 mod runs;
+mod ui;
 mod settings;
 mod studio;
 mod video;
@@ -30,6 +31,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use serde_json::json;
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::progress::Progress;
+use gpui_kit::component::switch::Switch;
+use gpui_kit::component::{Theme, ThemeMode};
 use runs::RunInfo;
 use settings::Settings;
 use studio::{Studio, View, media_path};
@@ -78,6 +82,7 @@ fn open_player(path: &Path, cx: &mut App) -> Entity<VideoPlayer> {
 /// Sent to the shell when the user goes back to the start screen.
 enum RunViewEvent {
     Back,
+    OpenSettings,
 }
 
 impl EventEmitter<RunViewEvent> for RunView {}
@@ -493,35 +498,73 @@ impl RunView {
     }
 }
 
+impl RunView {
+    fn render_status(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(v) = self.view.clone() else {
+            return div().text_sm().text_color(cx.theme().muted_foreground).child(self.status.clone()).into_any_element();
+        };
+        let mut col = v_flex().gap_2().child(ui::stepper(&v.state, cx));
+        if v.state == "failed" {
+            let note = v.note.clone().unwrap_or_else(|| "the engine stopped with an error".into());
+            col = col.child(
+                h_flex().gap_3().p_3().rounded_lg().items_center()
+                    .bg(ui::tint(ui::RED, 0.12)).border_1().border_color(ui::tint(ui::RED, 0.5))
+                    .child(v_flex().flex_1().min_w_0().gap_1()
+                        .child(div().font_weight(FontWeight::SEMIBOLD).text_color(ui::rgb(ui::RED)).child("This run stopped"))
+                        .child(div().text_sm().child(note)))
+                    .child(Button::new("settings").outline().small().label("AI settings…")
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(RunViewEvent::OpenSettings))))
+                    .child(Button::new("retry").primary().small().label("Retry")
+                        .on_click(cx.listener(|this, _, _, cx| this.command("resume", json!({}), cx)))),
+            );
+        } else if v.busy || !matches!(v.state.as_str(), "done" | "awaiting_approval") {
+            let (stage, unit, pct) = v.progress.clone().unwrap_or((v.state.clone(), String::new(), 0.0));
+            col = col.child(
+                h_flex().gap_3().items_center()
+                    .child(div().w(px(260.)).child(Progress::new("prog").value(pct as f32)))
+                    .child(div().text_sm().text_color(cx.theme().muted_foreground)
+                        .child(format!("{} {}{}", ui::stage_title(&stage), unit, if pct > 0.0 { format!(" · {pct:.0}%") } else { String::new() }))),
+            );
+        } else if v.state == "awaiting_approval" {
+            col = col.child(
+                h_flex().gap_2().p_2().rounded_lg().bg(ui::tint(ui::AMBER, 0.12))
+                    .child(div().text_sm().child("Your turn: pick the style sample you like on the canvas below (second row), then “Approve this style → generate”.")),
+            );
+        }
+        col.into_any_element()
+    }
+}
+
 impl Render for RunView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let title = format!("Run {}", self.run_id);
+        let source = self.view.as_ref().map(|v| v.source.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| self.run_id.clone());
         v_flex()
+            .id("run-view")
             .size_full()
-            .bg(cx.theme().background)
-            .text_color(cx.theme().foreground)
-            .p_3()
+            .overflow_y_scroll()
             .gap_3()
             .child(
                 h_flex()
                     .justify_between()
-                    .child(h_flex().gap_2().items_center()
+                    .items_center()
+                    .child(h_flex().gap_3().items_center()
                         .child(Button::new("back").small().ghost().label("← Runs")
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(RunViewEvent::Back))))
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(title)))
-                    .child(div().text_sm().text_color(cx.theme().muted_foreground).child(self.status.clone())),
+                        .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(source))
+                        .child(div().text_sm().text_color(cx.theme().muted_foreground).child(format!("run {}", self.run_id))))
+                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child(self.status.clone())),
             )
+            .child(self.render_status(cx))
             .child(self.render_review(cx))
             .child(
                 h_flex()
-                    .flex_1()
                     .gap_3()
                     .items_start()
-                    .child(v_flex().flex_1().h_full().gap_1()
+                    .child(v_flex().flex_1().gap_1()
                         .child(div().text_sm().text_color(cx.theme().muted_foreground)
-                            .child("Canvas · drag to pan · wheel to zoom · click to select"))
-                        .child(self.render_canvas(cx)))
-                    .child(div().w(px(380.)).child(self.render_ops(cx))),
+                            .child("Key images (top) and style samples (bottom) · drag to pan · wheel to zoom · click to select"))
+                        .child(div().h(px(340.)).child(self.render_canvas(cx))))
+                    .child(div().w(px(360.)).p_3().rounded_lg().bg(ui::rgb(ui::CARD)).border_1().border_color(ui::rgb(ui::LINE)).child(self.render_ops(cx))),
             )
     }
 }
@@ -531,7 +574,7 @@ impl Render for RunView {
 /// The engine (`c2a studio`) as the app sees it.
 #[derive(Clone)]
 enum Engine {
-    /// Not running; the reason is shown on the start screen.
+    /// Not running; the reason is shown in the sidebar and on the settings page.
     Off(String),
     Starting,
     /// Started by this app (stopped when the app quits).
@@ -549,20 +592,69 @@ impl Engine {
     }
 }
 
-/// The window: the start screen (runs, new run, engine) or one open run.
+#[derive(Clone, Copy, PartialEq)]
+enum Page {
+    Runs,
+    New,
+    Settings,
+}
+
+/// The New-run form.
+struct NewRunForm {
+    video: Option<PathBuf>,
+    animation: Option<String>,
+    director: Option<String>,
+    finish: Option<String>,
+    resolution: &'static str,
+    audio: &'static str,
+}
+
+/// The Settings form: text fields live in input entities, the rest here.
+struct SettingsForm {
+    mode: settings::Mode,
+    voice_enabled: bool,
+    video_resolution: String,
+    vlm_base: Entity<InputState>,
+    vlm_model: Entity<InputState>,
+    vlm_key: Entity<InputState>,
+    fal_key: Entity<InputState>,
+    fal_video: Entity<InputState>,
+    fal_image: Entity<InputState>,
+    fish_key: Entity<InputState>,
+    voice_model: Entity<InputState>,
+    voice_ref: Entity<InputState>,
+    checks: Vec<studio::Check>,
+    checking: bool,
+}
+
+/// The window: a sidebar and one page (runs, new run, settings) or one open run.
 struct Shell {
     settings: Settings,
     workdir: PathBuf,
     engine: Engine,
     c2a: Option<PathBuf>,
     runs: Vec<RunInfo>,
+    catalog: studio::Catalog,
+    page: Page,
     open: Option<Entity<RunView>>,
-    /// The last thing that happened (or went wrong), shown under the toolbar.
-    notice: String,
+    /// The last thing that happened (or went wrong).
+    notice: Option<(String, u32)>,
     /// "uploading …" while a new run is being created.
     busy: Option<String>,
     path_box: Entity<InputState>,
+    new_run: NewRunForm,
+    form: SettingsForm,
     _tasks: Vec<Task<()>>,
+}
+
+fn input(window: &mut Window, cx: &mut App, value: &str, placeholder: &str, masked: bool) -> Entity<InputState> {
+    let value = value.to_string();
+    let placeholder = placeholder.to_string();
+    cx.new(|cx| {
+        let mut s = InputState::new(window, cx).placeholder(placeholder).masked(masked);
+        s.set_value(value, window, cx);
+        s
+    })
 }
 
 impl Shell {
@@ -576,13 +668,14 @@ impl Shell {
             .clone()
             .or_else(|| args.run_dir.as_ref().and_then(|d| d.parent().map(Path::to_path_buf)))
             .unwrap_or_else(|| settings.workdir_or_default());
-        let path_box = cx.new(|cx| InputState::new(window, cx).placeholder("…or paste a path: a video (new run), a run folder, a runs folder, or the c2a program"));
+        let path_box = cx.new(|cx| InputState::new(window, cx).placeholder("…or paste the path of a video file here and press Enter"));
         cx.subscribe_in(&path_box, window, |this: &mut Self, _, ev: &InputEvent, window, cx| {
             if let InputEvent::PressEnter { .. } = ev {
                 this.go_path_box(window, cx);
             }
         })
         .detach();
+        let form = Self::form_from(&settings, window, cx);
         let mut tasks = Vec::new();
         // Keep the run list current (new runs, state changes), read from disk.
         tasks.push(cx.spawn(async move |this, cx| {
@@ -593,12 +686,16 @@ impl Shell {
                 cx.background_executor().timer(Duration::from_secs(2)).await;
             }
         }));
+        let first_launch = !settings.configured;
         let mut this = Self {
-            settings, workdir, engine: Engine::Off(String::new()), c2a: None, runs: Vec::new(), open: None,
-            notice: String::new(), busy: None, path_box, _tasks: tasks,
+            settings, workdir, engine: Engine::Off(String::new()), c2a: None, runs: Vec::new(),
+            catalog: studio::Catalog::default(), page: if first_launch { Page::Settings } else { Page::Runs },
+            open: None, notice: None, busy: None, path_box,
+            new_run: NewRunForm { video: None, animation: None, director: None, finish: None, resolution: "720p", audio: "regenerate" },
+            form, _tasks: tasks,
         };
         match args.studio {
-            Some(s) => this.engine = Engine::External(s),
+            Some(s) => this.set_engine(Engine::External(s), cx),
             None => this.start_engine(cx),
         }
         if let Some(dir) = args.run_dir {
@@ -606,6 +703,25 @@ impl Shell {
         }
         this.refresh_runs(cx);
         this
+    }
+
+    fn form_from(s: &Settings, window: &mut Window, cx: &mut Context<Self>) -> SettingsForm {
+        SettingsForm {
+            mode: s.mode,
+            voice_enabled: s.voice_enabled,
+            video_resolution: s.fal_video_resolution.clone(),
+            vlm_base: input(window, cx, &s.vlm_base_url, "https://…/v1/", false),
+            vlm_model: input(window, cx, &s.vlm_model, "model name", false),
+            vlm_key: input(window, cx, &s.vlm_key, "API key", true),
+            fal_key: input(window, cx, &s.fal_key, "fal.ai API key", true),
+            fal_video: input(window, cx, &s.fal_video_model, "fal model id", false),
+            fal_image: input(window, cx, &s.fal_image_model, "fal model id", false),
+            fish_key: input(window, cx, &s.fish_key, "Fish Audio API key", true),
+            voice_model: input(window, cx, &s.voice_model, "voice model", false),
+            voice_ref: input(window, cx, &s.voice_reference, "optional: a Fish voice id", false),
+            checks: Vec::new(),
+            checking: false,
+        }
     }
 
     fn refresh_runs(&mut self, cx: &mut Context<Self>) {
@@ -616,6 +732,11 @@ impl Shell {
         }
     }
 
+    fn say(&mut self, text: impl Into<String>, color: u32, cx: &mut Context<Self>) {
+        self.notice = Some((text.into(), color));
+        cx.notify();
+    }
+
     // ---------------------------------------------------------------- engine
     fn start_engine(&mut self, cx: &mut Context<Self>) {
         if matches!(self.engine, Engine::External(_)) {
@@ -623,15 +744,25 @@ impl Shell {
         }
         self.c2a = engine::find_c2a(self.settings.c2a.as_deref());
         let Some(c2a) = self.c2a.clone() else {
-            self.set_engine(Engine::Off("c2a engine not found: unpack the c2a release next to this app or in your home folder, or use “Locate c2a…”".into()), cx);
+            self.set_engine(Engine::Off("the c2a engine was not found — unpack the c2a release next to this app or in your home folder, or use “Locate c2a…” in Settings".into()), cx);
             return;
         };
         self.set_engine(Engine::Starting, cx);
-        let (workdir, extra) = (self.workdir.clone(), self.settings.engine_args.clone());
+        let mut args = Vec::new();
+        if let Some(cfg) = self.settings.write_engine_config() {
+            args.push("-c".to_string());
+            args.push(cfg.to_string_lossy().to_string());
+        }
+        args.extend(self.settings.engine_args.clone());
+        let env = self.settings.engine_config().1;
+        let workdir = self.workdir.clone();
         cx.spawn(async move |this, cx| {
-            let got = cx.background_executor().spawn(async move { engine::start(&c2a, &workdir, &extra) }).await;
+            let got = cx.background_executor().spawn(async move { engine::start(&c2a, &workdir, &args, &env) }).await;
             let _ = this.update(cx, |t, cx| match got {
-                Ok(studio) => t.set_engine(Engine::Ours(studio), cx),
+                Ok(studio) => {
+                    t.set_engine(Engine::Ours(studio), cx);
+                    t.load_catalog(cx);
+                }
                 Err(e) => t.set_engine(Engine::Off(format!("{e:#}")), cx),
             });
         })
@@ -647,29 +778,52 @@ impl Shell {
         cx.notify();
     }
 
-    fn engine_label(&self) -> (String, bool) {
+    fn load_catalog(&mut self, cx: &mut Context<Self>) {
+        let Some(studio) = self.engine.studio() else { return };
+        cx.spawn(async move |this, cx| {
+            let got = cx.background_executor().spawn(async move { studio.runs() }).await;
+            if let Ok(v) = got {
+                let _ = this.update(cx, |t, cx| {
+                    t.catalog = studio::Catalog::from_json(v.get("catalog").unwrap_or(&serde_json::Value::Null));
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// (sidebar line, color) for the engine and the AI providers.
+    fn engine_label(&self) -> (String, u32) {
+        let mode = if self.settings.mode == settings::Mode::Demo { "Demo mode (no AI)" } else { "Cloud AI" };
         match &self.engine {
-            Engine::Off(why) if why.is_empty() => ("engine: off".into(), false),
-            Engine::Off(why) => (format!("engine: off — {why}"), false),
-            Engine::Starting => ("engine: starting…".into(), false),
-            Engine::Ours(_) => (format!("engine: running ({})", self.c2a.as_ref().map(|p| p.display().to_string()).unwrap_or_default()), true),
-            Engine::External(_) => ("engine: connected (--studio)".into(), true),
+            Engine::Off(why) if why.is_empty() => ("engine off".into(), ui::MUTED),
+            Engine::Off(_) => ("engine off — see Settings".into(), ui::RED),
+            Engine::Starting => ("engine starting…".into(), ui::AMBER),
+            Engine::Ours(_) | Engine::External(_) => {
+                let missing = self.settings.missing();
+                if missing.is_empty() { (format!("{mode} · ready"), ui::GREEN) } else { (format!("{mode} · needs keys"), ui::AMBER) }
+            }
         }
     }
 
-    // ---------------------------------------------------------------- actions
+    // ---------------------------------------------------------------- navigation and actions
+    fn go(&mut self, page: Page, cx: &mut Context<Self>) {
+        self.page = page;
+        self.open = None;
+        self.notice = None;
+        cx.notify();
+    }
+
     fn open_run(&mut self, dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let studio = self.engine.studio();
         let view = cx.new(|cx| RunView::new(dir, studio, window, cx));
         cx.subscribe(&view, |this: &mut Self, _, ev: &RunViewEvent, cx| match ev {
-            RunViewEvent::Back => {
-                this.open = None;
-                this.notice.clear();
-                cx.notify();
-            }
+            RunViewEvent::Back => this.go(Page::Runs, cx),
+            RunViewEvent::OpenSettings => this.go(Page::Settings, cx),
         })
         .detach();
         self.open = Some(view);
+        self.notice = None;
         cx.notify();
     }
 
@@ -688,25 +842,44 @@ impl Shell {
         self.start_engine(cx);
     }
 
-    fn new_run(&mut self, video: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(studio) = self.engine.studio() else {
-            self.notice = "a new run needs the engine: wait for it to start, or fix it above".into();
-            cx.notify();
+    fn start_new_run(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(video) = self.new_run.video.clone() else {
+            self.say("choose a video first", ui::AMBER, cx);
             return;
         };
-        self.busy = Some(format!("uploading {} to the engine…", video.file_name().unwrap_or_default().to_string_lossy()));
+        let missing = self.settings.missing();
+        if !missing.is_empty() {
+            self.say(format!("Cloud AI needs {} — add it in Settings (or switch to Demo mode).", missing.join(", ")), ui::AMBER, cx);
+            return;
+        }
+        let Some(studio) = self.engine.studio() else {
+            self.say("the engine is not running yet — see the sidebar", ui::AMBER, cx);
+            return;
+        };
+        let f = &self.new_run;
+        let mut selection = serde_json::Map::new();
+        for (k, v) in [("animation", &f.animation), ("director", &f.director), ("finish", &f.finish)] {
+            if let Some(v) = v {
+                selection.insert(k.into(), json!(v));
+            }
+        }
+        let mut run_settings = json!({"output": {"resolution": f.resolution}, "audio": {"mode": f.audio}});
+        if !selection.is_empty() {
+            run_settings["style"] = json!({"selection": selection});
+        }
+        self.busy = Some(format!("Uploading {} to the engine…", video.file_name().unwrap_or_default().to_string_lossy()));
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
-            let got = cx.background_executor().spawn(async move { studio.create_run(&video) }).await;
+            let got = cx.background_executor().spawn(async move { studio.create_run(&video, &run_settings) }).await;
             let _ = this.update_in(cx, |t, window, cx| {
                 t.busy = None;
                 match got {
                     Ok(id) => {
-                        t.notice = format!("started run {id}: the engine prepares key images and style samples");
+                        t.new_run.video = None;
                         let dir = t.workdir.join(&id);
                         t.open_run(dir, window, cx);
                     }
-                    Err(e) => t.notice = format!("new run failed: {e:#}"),
+                    Err(e) => t.say(format!("Could not start the run: {e:#}"), ui::RED, cx),
                 }
                 cx.notify();
             });
@@ -729,8 +902,7 @@ impl Shell {
                         }
                     }
                     Ok(Ok(None)) => {}
-                    Ok(Err(e)) => t.notice = format!("no file dialog on this desktop ({e:#}): paste the path in the box below instead"),
-                    Err(_) => t.notice = "the file dialog closed unexpectedly: paste the path in the box below instead".into(),
+                    Ok(Err(_)) | Err(_) => t.say("No file dialog is available on this desktop: paste the path in the box instead.", ui::AMBER, cx),
                 }
                 cx.notify();
             });
@@ -738,8 +910,6 @@ impl Shell {
         .detach();
     }
 
-    /// The path box: a video starts a run, a run folder opens, a folder becomes the runs
-    /// folder, an executable named c2a becomes the engine.
     fn go_path_box(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let raw = self.path_box.read(cx).value().trim().trim_matches(|c| c == '"' || c == '\'').to_string();
         if raw.is_empty() {
@@ -747,120 +917,357 @@ impl Shell {
         }
         let p = PathBuf::from(shellexpand_home(&raw));
         if runs::is_video(&p) && p.is_file() {
-            self.new_run(p, window, cx);
+            self.new_run.video = Some(p);
+            self.page = Page::New;
+            self.open = None;
         } else if p.join("manifest.json").is_file() {
             self.open_run(p, window, cx);
         } else if p.is_dir() {
             self.set_workdir(p, cx);
-        } else if p.is_file() && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("c2a")) {
-            self.set_c2a(p, cx);
         } else {
-            self.notice = format!("not a video, run folder, folder or c2a program: {}", p.display());
+            self.say(format!("Not a video file, run folder or folder: {}", p.display()), ui::AMBER, cx);
         }
         self.path_box.update(cx, |s, cx| s.set_value("", window, cx));
         cx.notify();
     }
 
-    // ---------------------------------------------------------------- start screen
-    fn render_home(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (engine_text, engine_ok) = self.engine_label();
-        let engine_ready = self.engine.studio().is_some();
-        let toolbar = h_flex()
-            .gap_2()
-            .flex_wrap()
-            .items_center()
-            .child(Button::new("new-run").primary().label("New run from video…").disabled(!engine_ready || self.busy.is_some())
-                .tooltip("pick a cooking video: the engine finds key images and makes style samples")
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.pick(true, "Choose a cooking video", window, cx, |t, p, w, cx| t.new_run(p, w, cx))
-                })))
-            .child(Button::new("open-run").outline().label("Open run folder…")
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.pick(false, "Choose a run folder", window, cx, |t, p, w, cx| {
-                        if p.join("manifest.json").is_file() { t.open_run(p, w, cx) } else { t.set_workdir(p, cx) }
-                    })
-                })))
-;
-        let folder_row = h_flex()
-            .gap_2()
-            .items_center()
-            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("Runs ({})", self.runs.len())))
-            .child(div().flex_1().min_w_0().truncate().text_sm().text_color(cx.theme().muted_foreground)
-                .child(format!("in {}", self.workdir.display())))
-            .child(Button::new("workdir").small().outline().label("Change folder…")
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.pick(false, "Choose the runs folder", window, cx, |t, p, _, cx| t.set_workdir(p, cx))
-                })));
-        let engine_row = h_flex()
-            .gap_2()
-            .items_center()
-            .child(div().size(px(8.)).rounded_full().bg(if engine_ok { gpui_kit::rgb(0x16a34a) } else { gpui_kit::rgb(0xa3a3a3) }))
-            .child(div().text_sm().text_color(cx.theme().muted_foreground).child(engine_text))
-            .when(matches!(self.engine, Engine::Off(_)), |row| {
-                row.child(Button::new("retry").small().ghost().label("Start engine").on_click(cx.listener(|this, _, _, cx| this.start_engine(cx))))
-                    .child(Button::new("locate").small().ghost().label("Locate c2a…").on_click(cx.listener(|this, _, window, cx| {
-                        this.pick(true, "Choose the c2a program", window, cx, |t, p, _, cx| t.set_c2a(p, cx))
-                    })))
-            });
-        let list: Vec<AnyElement> = self
-            .runs
-            .clone()
-            .into_iter()
-            .map(|r| {
-                let dir = r.dir.clone();
-                let thumb = match &r.thumb {
-                    Some(p) => img(p.clone()).w(px(128.)).h(px(72.)).rounded_md().object_fit(ObjectFit::Cover).into_any_element(),
-                    None => div().w(px(128.)).h(px(72.)).rounded_md().bg(cx.theme().muted).into_any_element(),
-                };
-                h_flex()
-                    .id(SharedString::from(format!("run-{}", r.id)))
-                    .gap_3()
-                    .p_2()
-                    .items_center()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .bg(cx.theme().background)
-                    .hover(|s| s.bg(cx.theme().muted))
-                    .cursor_pointer()
-                    .child(thumb)
-                    .child(v_flex().flex_1().gap_1()
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(r.source.clone()))
-                        .child(div().text_sm().text_color(cx.theme().muted_foreground)
-                            .child(if r.created.is_empty() { r.id.clone() } else { format!("{} · run {}", r.created, r.id) })))
-                    .child(div().text_sm().px_2().py_1().rounded_md().bg(cx.theme().muted).child(state_label(&r.state)))
-                    .on_click(cx.listener(move |this, _, window, cx| this.open_run(dir.clone(), window, cx)))
-                    .into_any_element()
-            })
-            .collect();
-        let body = if list.is_empty() {
-            div().p_6().text_color(cx.theme().muted_foreground)
-                .child("No runs in this folder yet. Start one with “New run from video…”, or choose another runs folder.")
-                .into_any_element()
-        } else {
-            v_flex().id("runs").gap_2().overflow_y_scroll().children(list).into_any_element()
-        };
-        v_flex()
-            .size_full()
-            .gap_3()
-            .child(h_flex().justify_between().items_center()
-                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("c2a Review"))
-                .child(engine_row))
-            .child(toolbar)
-            .when_some(self.busy.clone().or_else(|| (!self.notice.is_empty()).then(|| self.notice.clone())), |c, msg| {
-                c.child(div().text_sm().p_2().rounded_md().bg(cx.theme().muted).child(msg))
-            })
-            .child(folder_row)
-            .child(div().flex_1().min_h_0().child(body))
-            .child(Input::new(&self.path_box))
+    // ---------------------------------------------------------------- settings
+    fn apply_preset(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let p = settings::VLM_PRESETS[i];
+        self.form.vlm_base.update(cx, |s, cx| s.set_value(p.base_url, window, cx));
+        self.form.vlm_model.update(cx, |s, cx| s.set_value(p.model, window, cx));
+        cx.notify();
     }
-}
 
-fn state_label(state: &str) -> String {
-    match state {
-        "" => "new".into(),
-        "awaiting_approval" | "gate" => "waiting for your style approval".into(),
-        s => s.replace('_', " "),
+    fn save_settings(&mut self, cx: &mut Context<Self>) {
+        let v = |e: &Entity<InputState>, cx: &App| e.read(cx).value().trim().to_string();
+        let f = &self.form;
+        let s = &mut self.settings;
+        s.mode = f.mode;
+        s.voice_enabled = f.voice_enabled;
+        s.fal_video_resolution = f.video_resolution.clone();
+        s.vlm_base_url = v(&f.vlm_base, cx);
+        s.vlm_model = v(&f.vlm_model, cx);
+        s.vlm_key = v(&f.vlm_key, cx);
+        s.fal_key = v(&f.fal_key, cx);
+        s.fal_video_model = v(&f.fal_video, cx);
+        s.fal_image_model = v(&f.fal_image, cx);
+        s.fish_key = v(&f.fish_key, cx);
+        s.voice_model = v(&f.voice_model, cx);
+        s.voice_reference = v(&f.voice_ref, cx);
+        s.configured = true;
+        s.save();
+        self.form.checks.clear();
+        self.form.checking = true;
+        self.start_engine(cx);
+        // Check once the engine is up (live: one tiny call to the vision model).
+        cx.spawn(async move |this, cx| {
+            for _ in 0..240 {
+                cx.background_executor().timer(Duration::from_millis(250)).await;
+                let Ok(engine) = this.read_with(cx, |t, _| t.engine.clone()) else { return };
+                match engine {
+                    Engine::Starting => continue,
+                    Engine::Off(why) => {
+                        let _ = this.update(cx, |t, cx| {
+                            t.form.checking = false;
+                            t.form.checks = vec![studio::Check { name: "engine".into(), ok: false, detail: why, fix: "Locate c2a… below".into() }];
+                            cx.notify();
+                        });
+                        return;
+                    }
+                    Engine::Ours(studio) | Engine::External(studio) => {
+                        let got = cx.background_executor().spawn(async move { studio.doctor(true) }).await;
+                        let _ = this.update(cx, |t, cx| {
+                            t.form.checking = false;
+                            match got {
+                                Ok(checks) => t.form.checks = checks,
+                                Err(e) => t.form.checks = vec![studio::Check { name: "engine".into(), ok: false, detail: format!("{e:#}"), fix: String::new() }],
+                            }
+                            cx.notify();
+                        });
+                        return;
+                    }
+                }
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    // ---------------------------------------------------------------- rendering
+    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active = if self.open.is_some() { None } else { Some(self.page) };
+        let item = |id: &'static str, label: &'static str, page: Page, active: Option<Page>, cx: &mut Context<Self>| {
+            let on = active == Some(page);
+            div()
+                .id(id)
+                .px_3()
+                .py_2()
+                .rounded_lg()
+                .cursor_pointer()
+                .text_sm()
+                .font_weight(if on { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                .text_color(if on { ui::rgb(0xffffff) } else { ui::rgb(0xc4c4d0) })
+                .when(on, |d| d.bg(ui::tint(ui::ACCENT, 0.16)).border_l_2().border_color(ui::rgb(ui::ACCENT)))
+                .hover(|d| d.bg(ui::rgb(ui::CARD_HOVER)))
+                .child(label)
+                .on_click(cx.listener(move |this, _, _, cx| this.go(page, cx)))
+        };
+        let (engine_text, engine_color) = self.engine_label();
+        v_flex()
+            .w(px(220.))
+            .h_full()
+            .flex_none()
+            .bg(ui::rgb(ui::SIDEBAR))
+            .border_r_1()
+            .border_color(ui::rgb(ui::LINE))
+            .p_3()
+            .gap_1()
+            .child(
+                v_flex().px_2().pt_2().pb_4().gap_1()
+                    .child(h_flex().gap_2().items_center()
+                        .child(div().size(px(22.)).rounded_md().bg(ui::rgb(ui::ACCENT))
+                            .child(div().size_full().rounded_md().bg(ui::tint(ui::ACCENT_2, 0.55))))
+                        .child(div().text_lg().font_weight(FontWeight::BOLD).child("c2a Review")))
+                    .child(div().text_xs().text_color(ui::rgb(ui::MUTED)).child("cooking video → anime")),
+            )
+            .child(item("nav-runs", "Runs", Page::Runs, active, cx))
+            .child(item("nav-new", "New run", Page::New, active, cx))
+            .child(item("nav-settings", "Settings", Page::Settings, active, cx))
+            .child(div().flex_1())
+            .child(
+                v_flex().gap_1().p_3().rounded_lg().bg(ui::rgb(ui::CARD)).border_1().border_color(ui::rgb(ui::LINE))
+                    .child(h_flex().gap_2().items_center()
+                        .child(div().size(px(8.)).rounded_full().bg(ui::rgb(engine_color)))
+                        .child(div().text_xs().font_weight(FontWeight::MEDIUM).child(engine_text)))
+                    .child(div().text_xs().text_color(ui::rgb(ui::MUTED)).truncate().child(format!("{}", self.workdir.display()))),
+            )
+    }
+
+    fn render_notice(&self) -> Option<AnyElement> {
+        let (text, color) = self.busy.clone().map(|b| (b, ui::BLUE)).or_else(|| self.notice.clone())?;
+        Some(div().p_3().rounded_lg().text_sm().bg(ui::tint(color, 0.12)).border_1().border_color(ui::tint(color, 0.45)).child(text).into_any_element())
+    }
+
+    fn render_runs(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let header = h_flex().justify_between().items_center()
+            .child(v_flex().gap_1()
+                .child(div().text_2xl().font_weight(FontWeight::BOLD).child("Runs"))
+                .child(div().text_sm().text_color(ui::rgb(ui::MUTED)).child(format!("{} in {}", self.runs.len(), self.workdir.display()))))
+            .child(h_flex().gap_2()
+                .child(Button::new("folder").outline().label("Change folder…").on_click(cx.listener(|this, _, window, cx| {
+                    this.pick(false, "Choose the runs folder", window, cx, |t, p, _, cx| t.set_workdir(p, cx))
+                })))
+                .child(Button::new("new").primary().label("New run").on_click(cx.listener(|this, _, _, cx| this.go(Page::New, cx)))));
+        if self.runs.is_empty() {
+            return v_flex().gap_6().child(header).child(
+                v_flex().items_center().justify_center().gap_3().py_16().rounded_xl().border_1().border_dashed().border_color(ui::rgb(ui::LINE))
+                    .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("Turn a cooking video into anime"))
+                    .child(div().text_sm().text_color(ui::rgb(ui::MUTED)).child("Start a run from a video: the AI picks key images, tags the action, and shows style samples for you to approve."))
+                    .child(Button::new("empty-new").primary().label("New run").on_click(cx.listener(|this, _, _, cx| this.go(Page::New, cx)))),
+            ).into_any_element();
+        }
+        let cards: Vec<AnyElement> = self.runs.clone().into_iter().map(|r| {
+            let dir = r.dir.clone();
+            let (label, color) = ui::state_chip(&r.state);
+            let thumb = match &r.thumb {
+                Some(p) => img(p.clone()).w_full().h(px(162.)).object_fit(ObjectFit::Cover).into_any_element(),
+                None => div().w_full().h(px(162.)).bg(ui::tint(ui::ACCENT, 0.08)).flex().items_center().justify_center()
+                    .text_sm().text_color(ui::rgb(ui::MUTED)).child("preparing…").into_any_element(),
+            };
+            v_flex()
+                .id(SharedString::from(format!("run-{}", r.id)))
+                .w(px(288.))
+                .rounded_xl()
+                .overflow_hidden()
+                .bg(ui::rgb(ui::CARD))
+                .border_1()
+                .border_color(ui::rgb(ui::LINE))
+                .cursor_pointer()
+                .hover(|d| d.border_color(ui::rgb(ui::ACCENT)).bg(ui::rgb(ui::CARD_HOVER)))
+                .child(thumb)
+                .child(v_flex().p_3().gap_2()
+                    .child(h_flex().justify_between().items_center().gap_2()
+                        .child(div().flex_1().min_w_0().truncate().font_weight(FontWeight::SEMIBOLD).child(r.source.clone()))
+                        .child(ui::chip(label, color)))
+                    .child(div().text_xs().text_color(ui::rgb(ui::MUTED)).child(if r.created.is_empty() { r.id.clone() } else { r.created.clone() })))
+                .on_click(cx.listener(move |this, _, window, cx| this.open_run(dir.clone(), window, cx)))
+                .into_any_element()
+        }).collect();
+        v_flex().gap_6().child(header).child(h_flex().flex_wrap().gap_4().children(cards)).into_any_element()
+    }
+
+    fn render_new(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let demo = self.settings.mode == settings::Mode::Demo;
+        let missing = self.settings.missing();
+        let video = self.new_run.video.clone();
+        let mut col = v_flex().gap_4().max_w(px(920.))
+            .child(v_flex().gap_1()
+                .child(div().text_2xl().font_weight(FontWeight::BOLD).child("New run"))
+                .child(div().text_sm().text_color(ui::rgb(ui::MUTED)).child("Choose a cooking video and a look. The AI finds the key moments and makes style samples; you approve one, then it animates the whole video.")));
+        if demo {
+            col = col.child(div().p_3().rounded_lg().text_sm().bg(ui::tint(ui::AMBER, 0.12)).child("Demo mode: no AI is called and the result is a quick stand-in. Switch to Cloud AI in Settings for real anime output."));
+        } else if !missing.is_empty() {
+            col = col.child(h_flex().gap_3().items_center().p_3().rounded_lg().bg(ui::tint(ui::AMBER, 0.12))
+                .child(div().flex_1().text_sm().child(format!("Cloud AI needs {} first.", missing.join(", "))))
+                .child(Button::new("to-settings").small().primary().label("Open Settings").on_click(cx.listener(|this, _, _, cx| this.go(Page::Settings, cx)))));
+        }
+        // 1. the video
+        let mut pick = ui::section("1 · Video", "mp4, mov, mkv, webm or m4v; short clips (10–60 s) work best.", cx);
+        pick = pick.child(h_flex().gap_3().items_center()
+            .child(Button::new("choose").primary().label(if video.is_some() { "Choose another video…" } else { "Choose a video…" })
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.pick(true, "Choose a cooking video", window, cx, |t, p, _, cx| { t.new_run.video = Some(p); cx.notify(); })
+                })))
+            .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(video.as_ref().map(|v| v.file_name().unwrap_or_default().to_string_lossy().to_string()).unwrap_or_else(|| "no video chosen".into()))))
+            .child(Input::new(&self.path_box));
+        col = col.child(pick);
+        // 2. the look
+        let layer = |id: &'static str, title: &'static str, items: Vec<(String, String)>, chosen: Option<String>, cx: &mut Context<Self>| {
+            v_flex().gap_2().child(ui::label(title, cx)).child(h_flex().gap_2().flex_wrap().children(items.into_iter().map(|(name, label)| {
+                let on = chosen.as_deref() == Some(name.as_str());
+                Button::new(SharedString::from(format!("{id}-{name}"))).small().outline().selected(on).label(label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let slot = match id { "anim" => &mut this.new_run.animation, "dir" => &mut this.new_run.director, _ => &mut this.new_run.finish };
+                        *slot = if slot.as_deref() == Some(name.as_str()) { None } else { Some(name.clone()) };
+                        cx.notify();
+                    }))
+            })))
+        };
+        let cat = self.catalog.clone();
+        let mut look = ui::section("2 · Look", "Pick one in each row, or leave a row empty for the default. You can still change it before approving.", cx);
+        if cat.animation.is_empty() {
+            look = look.child(div().text_sm().text_color(ui::rgb(ui::MUTED)).child("Style presets appear when the engine is running."));
+        } else {
+            look = look
+                .child(layer("anim", "Animation style", cat.animation, self.new_run.animation.clone(), cx))
+                .child(layer("dir", "Director's language", cat.director, self.new_run.director.clone(), cx))
+                .child(layer("fin", "Film finish", cat.finish, self.new_run.finish.clone(), cx));
+        }
+        col = col.child(look);
+        // 3. output and sound
+        let res = self.new_run.resolution;
+        let audio = self.new_run.audio;
+        col = col.child(ui::section("3 · Output and sound", "", cx)
+            .child(h_flex().gap_6()
+                .child(v_flex().gap_2().child(ui::label("Resolution", cx)).child(h_flex().gap_2().children(["720p", "1080p"].into_iter().map(|r| {
+                    Button::new(SharedString::from(format!("res-{r}"))).small().outline().selected(res == r).label(r)
+                        .on_click(cx.listener(move |this, _, _, cx| { this.new_run.resolution = r; cx.notify(); }))
+                }))))
+                .child(v_flex().gap_2().child(ui::label("Sound", cx)).child(h_flex().gap_2().children([("regenerate", "New foley + voice sounds"), ("keep_voice", "Keep the voice"), ("silent", "Silent")].into_iter().map(|(m, l)| {
+                    Button::new(SharedString::from(format!("aud-{m}"))).small().outline().selected(audio == m).label(l)
+                        .on_click(cx.listener(move |this, _, _, cx| { this.new_run.audio = m; cx.notify(); }))
+                }))))));
+        if let Some(n) = self.render_notice() {
+            col = col.child(n);
+        }
+        let ready = video.is_some() && self.busy.is_none() && self.engine.studio().is_some() && missing.is_empty();
+        col = col.child(h_flex().justify_end().child(Button::new("start").primary().large().label("Start run").disabled(!ready)
+            .on_click(cx.listener(|this, _, window, cx| this.start_new_run(window, cx)))));
+        col.into_any_element()
+    }
+
+    fn render_settings(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let first = !self.settings.configured;
+        let f = &self.form;
+        let cloud = f.mode == settings::Mode::Cloud;
+        let mut col = v_flex().gap_4().max_w(px(920.))
+            .child(v_flex().gap_1()
+                .child(div().text_2xl().font_weight(FontWeight::BOLD).child(if first { "Welcome — set up the AI" } else { "Settings" }))
+                .child(div().text_sm().text_color(ui::rgb(ui::MUTED)).child("c2a uses three cloud services: a vision LLM watches your video, fal.ai draws and animates, Fish Audio adds voice sounds. Keys stay on this computer (~/.config/c2a-review, readable only by you).")));
+        // mode
+        let mode_btn = |id: &'static str, title: &'static str, sub: &'static str, m: settings::Mode, on: bool, cx: &mut Context<Self>| {
+            v_flex().id(id).flex_1().gap_1().p_4().rounded_xl().cursor_pointer().border_1()
+                .border_color(if on { ui::rgb(ui::ACCENT) } else { ui::rgb(ui::LINE) })
+                .bg(if on { ui::tint(ui::ACCENT, 0.10) } else { ui::rgb(ui::CARD) })
+                .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
+                .child(div().text_sm().text_color(ui::rgb(ui::MUTED)).child(sub))
+                .on_click(cx.listener(move |this, _, _, cx| { this.form.mode = m; cx.notify(); }))
+        };
+        col = col.child(h_flex().gap_3()
+            .child(mode_btn("mode-cloud", "Cloud AI", "Real anime restyle, animation and sound. Needs API keys; you pay the providers per use.", settings::Mode::Cloud, cloud, cx))
+            .child(mode_btn("mode-demo", "Demo", "No AI and no keys: instant stand-in results, to learn the app.", settings::Mode::Demo, !cloud, cx)));
+        if cloud {
+            // vision LLM
+            let base_now = f.vlm_base.read(cx).value().to_string();
+            let mut vlm = ui::section("Vision LLM", "Watches each key moment and tags the action, motion, camera and mood; also checks for on-screen text. Any OpenAI-compatible API with image input.", cx)
+                .child(h_flex().gap_2().flex_wrap().children(settings::VLM_PRESETS.iter().enumerate().map(|(i, p)| {
+                    Button::new(SharedString::from(format!("preset-{i}"))).small().outline().selected(base_now == p.base_url).label(p.name)
+                        .on_click(cx.listener(move |this, _, window, cx| this.apply_preset(i, window, cx)))
+                })));
+            let hint = settings::VLM_PRESETS.iter().find(|p| p.base_url == base_now).map(|p| p.key_hint).unwrap_or("your provider's console");
+            vlm = vlm.child(h_flex().gap_3()
+                    .child(v_flex().flex_1().gap_1().child(ui::label("Base URL", cx)).child(Input::new(&f.vlm_base)))
+                    .child(v_flex().w(px(260.)).gap_1().child(ui::label("Model", cx)).child(Input::new(&f.vlm_model))))
+                .child(v_flex().gap_1().child(ui::label(&format!("API key · get one at {hint}"), cx)).child(Input::new(&f.vlm_key)));
+            col = col.child(vlm);
+            // fal.ai
+            let res = f.video_resolution.clone();
+            col = col.child(ui::section("fal.ai — restyle, animation, foley", "Draws the anime frames (Nano Banana), animates them (Wan 2.2) and makes sound effects (MMAudio). Key: fal.ai/dashboard/keys.", cx)
+                .child(v_flex().gap_1().child(ui::label("API key", cx)).child(Input::new(&f.fal_key)))
+                .child(v_flex().gap_2().child(ui::label("Video quality (480p is faster and cheaper; the result is upscaled either way)", cx))
+                    .child(h_flex().gap_2().children(["480p", "720p"].into_iter().map(|r| {
+                        Button::new(SharedString::from(format!("vres-{r}"))).small().outline().selected(res == r).label(r)
+                            .on_click(cx.listener(move |this, _, _, cx| { this.form.video_resolution = r.into(); cx.notify(); }))
+                    }))))
+                .child(h_flex().gap_3()
+                    .child(v_flex().flex_1().gap_1().child(ui::label("Image model (advanced)", cx)).child(Input::new(&f.fal_image)))
+                    .child(v_flex().flex_1().gap_1().child(ui::label("Video model (advanced)", cx)).child(Input::new(&f.fal_video)))));
+            // Fish Audio
+            let voice = f.voice_enabled;
+            let mut fish = ui::section("Fish Audio — voice sounds", "Small non-verbal sounds (a satisfied sigh, a quiet “mm”) where someone is on screen. Never words. Key: fish.audio → API keys.", cx)
+                .child(Switch::new("voice").checked(voice).label("Add voice sounds")
+                    .on_click(cx.listener(|this, on: &bool, _, cx| { this.form.voice_enabled = *on; cx.notify(); })));
+            if voice {
+                fish = fish.child(v_flex().gap_1().child(ui::label("API key", cx)).child(Input::new(&f.fish_key)))
+                    .child(h_flex().gap_3()
+                        .child(v_flex().w(px(220.)).gap_1().child(ui::label("Voice model", cx)).child(Input::new(&f.voice_model)))
+                        .child(v_flex().flex_1().gap_1().child(ui::label("Voice (reference id, optional)", cx)).child(Input::new(&f.voice_ref))));
+            }
+            col = col.child(fish);
+        }
+        // engine and storage
+        let c2a = self.c2a.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "not found".into());
+        col = col.child(ui::section("Engine and storage", "", cx)
+            .child(h_flex().gap_3().items_center()
+                .child(v_flex().flex_1().min_w_0().gap_1().child(ui::label("c2a engine", cx)).child(div().text_sm().truncate().child(c2a)))
+                .child(Button::new("locate").small().outline().label("Locate c2a…").on_click(cx.listener(|this, _, window, cx| {
+                    this.pick(true, "Choose the c2a program", window, cx, |t, p, _, cx| t.set_c2a(p, cx))
+                }))))
+            .child(h_flex().gap_3().items_center()
+                .child(v_flex().flex_1().min_w_0().gap_1().child(ui::label("Runs folder", cx)).child(div().text_sm().truncate().child(self.workdir.display().to_string())))
+                .child(Button::new("folder2").small().outline().label("Change…").on_click(cx.listener(|this, _, window, cx| {
+                    this.pick(false, "Choose the runs folder", window, cx, |t, p, _, cx| t.set_workdir(p, cx))
+                })))));
+        // save + checks
+        let checking = self.form.checking;
+        col = col.child(h_flex().gap_3().items_center().justify_end()
+            .when(checking, |d| d.child(div().text_sm().text_color(ui::rgb(ui::MUTED)).child("restarting the engine and checking…")))
+            .child(Button::new("save").primary().large().label("Save and check").disabled(checking)
+                .on_click(cx.listener(|this, _, _, cx| this.save_settings(cx)))));
+        if !self.form.checks.is_empty() {
+            let all_ok = self.form.checks.iter().all(|c| c.ok);
+            let mut list = ui::section(if all_ok { "All set" } else { "Check results" },
+                if all_ok { "Everything works. Start a run from “New run”." } else { "Fix the red items and save again." }, cx);
+            for c in self.form.checks.clone() {
+                list = list.child(h_flex().gap_3().items_start()
+                    .child(div().w(px(18.)).font_weight(FontWeight::BOLD).text_color(ui::rgb(if c.ok { ui::GREEN } else { ui::RED })).child(if c.ok { "✓" } else { "✗" }))
+                    .child(v_flex().flex_1().min_w_0().gap_0p5()
+                        .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(c.name.clone()))
+                        .child(div().text_xs().text_color(ui::rgb(ui::MUTED)).child(c.detail.clone()))
+                        .when(!c.ok && !c.fix.is_empty(), |d| d.child(div().text_xs().text_color(ui::rgb(ui::AMBER)).child(c.fix.clone())))));
+            }
+            if all_ok {
+                list = list.child(h_flex().justify_end().child(Button::new("go-new").primary().label("New run").on_click(cx.listener(|this, _, _, cx| this.go(Page::New, cx)))));
+            }
+            col = col.child(list);
+        }
+        if let Engine::Off(why) = &self.engine {
+            if !why.is_empty() {
+                col = col.child(div().p_3().rounded_lg().text_sm().bg(ui::tint(ui::RED, 0.12)).child(format!("Engine: {why}")));
+            }
+        }
+        col.into_any_element()
     }
 }
 
@@ -873,11 +1280,24 @@ fn shellexpand_home(p: &str) -> String {
 
 impl Render for Shell {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = match &self.open {
-            Some(run) => run.clone().into_any_element(),
-            None => self.render_home(cx).into_any_element(),
+        let content = match (&self.open, self.page) {
+            (Some(run), _) => run.clone().into_any_element(),
+            (None, Page::Runs) => {
+                let mut c = v_flex().gap_4();
+                if let Some(n) = self.render_notice() {
+                    c = c.child(n);
+                }
+                c.child(self.render_runs(cx)).into_any_element()
+            }
+            (None, Page::New) => self.render_new(cx),
+            (None, Page::Settings) => self.render_settings(cx),
         };
-        div().size_full().bg(cx.theme().background).text_color(cx.theme().foreground).p_3().child(content)
+        h_flex()
+            .size_full()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
+            .child(self.render_sidebar(cx))
+            .child(div().id("main").flex_1().h_full().min_w_0().overflow_y_scroll().p_6().child(content))
     }
 }
 
@@ -895,7 +1315,7 @@ fn arg(name: &str) -> Option<String> {
 
 fn main() {
     if std::env::args().any(|a| a == "--help" || a == "-h") {
-        println!("usage: c2a-review [--workdir <runs folder>] [--run-dir <run folder>] [--c2a <path to c2a>]\n                  [--studio <url> --token <token>]\nWith no arguments it starts the c2a engine itself and shows the runs in the last runs folder.");
+        println!("usage: c2a-review [--workdir <runs folder>] [--run-dir <run folder>] [--c2a <path to c2a>]\n                  [--studio <url> --token <token>]\nWith no arguments it starts the c2a engine itself; AI providers and keys are set in Settings.");
         return;
     }
     let args = Args {
@@ -906,6 +1326,7 @@ fn main() {
     };
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
+        Theme::change(ThemeMode::Dark, None, cx);
         cx.on_app_quit(|_| async { engine::stop() }).detach();
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {

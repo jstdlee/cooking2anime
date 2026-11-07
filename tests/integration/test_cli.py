@@ -76,9 +76,13 @@ def test_doctor_and_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -
     assert main(["run", "x.mp4", "--set", "novalue"]) == 2
 
 
-def test_local_stack_explains_what_is_missing(fixtures: dict[str, Path], tmp_path: Path,
-                                              capsys: pytest.CaptureFixture[str]) -> None:
+def test_default_stack_explains_what_is_missing(fixtures: dict[str, Path], tmp_path: Path,
+                                                capsys: pytest.CaptureFixture[str],
+                                                monkeypatch: pytest.MonkeyPatch) -> None:
+    for k in ("GEMINI_API_KEY", "FAL_KEY", "FISH_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
     assert main(["run", str(fixtures["cut"]), "--workdir", str(tmp_path)]) == 2
     err = capsys.readouterr().err
+    assert "GEMINI_API_KEY" in err and "FAL_KEY" in err  # the cloud stack names its keys
     assert "--stack fake" in err
     assert not any(tmp_path.iterdir())

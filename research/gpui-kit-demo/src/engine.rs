@@ -78,8 +78,9 @@ fn random_token() -> String {
 }
 
 /// Starts `c2a studio` on `workdir` and waits until its API answers. Blocking: call it
-/// off the UI thread. `extra` is added to the command line (e.g. `--stack cloud`).
-pub fn start(c2a: &Path, workdir: &Path, extra: &[String]) -> Result<Studio> {
+/// off the UI thread. `extra` is added to the command line (e.g. `-c engine.yaml`); `env`
+/// carries the API keys (never on the command line, where `ps` would show them).
+pub fn start(c2a: &Path, workdir: &Path, extra: &[String], env: &[(String, String)]) -> Result<Studio> {
     stop();
     std::fs::create_dir_all(workdir).with_context(|| format!("cannot create {}", workdir.display()))?;
     let port = free_port()?;
@@ -90,6 +91,7 @@ pub fn start(c2a: &Path, workdir: &Path, extra: &[String]) -> Result<Studio> {
         .arg(workdir)
         .args(extra)
         .env("C2A_STUDIO_TOKEN", &token)
+        .envs(env.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.as_str(), v.as_str())))
         // Relative config paths (configs/…) resolve from the project folder that holds `runs/`.
         .current_dir(workdir.parent().filter(|p| p.is_dir()).unwrap_or(workdir))
         .stdin(Stdio::null())

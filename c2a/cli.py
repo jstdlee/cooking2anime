@@ -217,7 +217,7 @@ def cmd_studio(a: argparse.Namespace) -> int:
 
 def cmd_doctor(a: argparse.Namespace) -> int:
     ok = True
-    for c in app.doctor(_cfg(a)):
+    for c in app.doctor(_cfg(a), live=getattr(a, "live", False)):
         ok &= c["ok"]
         print(f"{'ok ' if c['ok'] else 'BAD'} {c['name']:<15} {c['detail']}"
               + (f"\n    fix: {c['fix']}" if not c["ok"] and c["fix"] else ""))
@@ -318,6 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("doctor", help="check tools, GPU, keys and the provider stack")
     sp.add_argument("--strict", action="store_true")
+    sp.add_argument("--live", action="store_true", help="also call the vision model once")
     cfg_args(sp)
     sp.set_defaults(fn=cmd_doctor)
     return p
