@@ -35,6 +35,45 @@ impl Studio {
         View::from_json(&v)
     }
 
+    /// The runs the engine knows (also a cheap "is it up?" check).
+    pub fn runs(&self) -> Result<Value> {
+        self.agent
+            .get(&format!("{}/api/runs", self.base))
+            .set("X-C2A-Token", &self.token)
+            .call()
+            .map_err(http_error)?
+            .into_json()
+            .context("runs is not JSON")
+    }
+
+    /// Starts a run from a video file (`POST /api/runs`, the web Studio's upload). The file is
+    /// streamed, not read into memory. Returns the new run's id.
+    pub fn create_run(&self, video: &Path) -> Result<String> {
+        use std::io::Read as _;
+        let name = video.file_name().map(|n| n.to_string_lossy().replace('"', "")).unwrap_or_else(|| "video.mp4".into());
+        let boundary = format!("c2a-review-{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
+        let head = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"settings\"\r\n\r\n{{}}\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"video\"; filename=\"{name}\"\r\n\
+             Content-Type: application/octet-stream\r\n\r\n"
+        );
+        let tail = format!("\r\n--{boundary}--\r\n");
+        let file = std::fs::File::open(video).with_context(|| format!("cannot read {}", video.display()))?;
+        let body = std::io::Cursor::new(head.into_bytes()).chain(file).chain(std::io::Cursor::new(tail.into_bytes()));
+        let v: Value = self
+            .agent
+            .post(&format!("{}/api/runs", self.base))
+            .timeout(Duration::from_secs(1800))
+            .set("X-C2A-Token", &self.token)
+            .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
+            .send(body)
+            .map_err(http_error)?
+            .into_json()
+            .context("new run reply is not JSON")?;
+        let id = s(&v, "run");
+        if id.is_empty() { Err(anyhow!("the engine did not return a run id")) } else { Ok(id) }
+    }
+
     /// Sends one engine command (the same ones the web Studio and the CLI use).
     pub fn command(&self, run: &str, op: &str, args: Value) -> Result<()> {
         self.agent

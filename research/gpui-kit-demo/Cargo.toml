@@ -1,6 +1,6 @@
 [package]
 name = "c2a-gpui-demo"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 publish = false
 description = "Research demo: c2a review app (video review, image canvas, AI operations) on GPUI Kit"
@@ -11,6 +11,7 @@ name = "c2a-review"
 path = "src/main.rs"
 
 [dependencies]
+libc = "0.2"
 gpui-kit = "0.9.0"
 # The media engine without its GPUI layer (alhazen-gpui pins gpui 0.2.2; see NOTES.md).
 alhazen-core = { version = "0.7.1", default-features = false, features = ["native", "audio-output", "ffmpeg-cli", "nvdec", "native-aac", "native-mp3"] }

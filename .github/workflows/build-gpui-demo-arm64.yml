@@ -54,12 +54,13 @@ jobs:
       - name: Build and package (arm64)
         run: ./ci/build-arm64.sh "${{ steps.v.outputs.version }}"
 
-      - name: Smoke test under QEMU (prints usage, needs no display)
+      - name: Smoke test under QEMU (--help needs no display)
         run: |
           sudo apt-get install -y -qq qemu-user >/dev/null
-          out=$(qemu-aarch64 -L /usr/aarch64-linux-gnu dist/c2a-review-*-linux-arm64/c2a-review 2>&1 || true)
+          out=$(qemu-aarch64 -L /usr/aarch64-linux-gnu dist/c2a-review-*-linux-arm64/c2a-review --help 2>&1 || true)
           echo "$out"
           grep -q "usage: c2a-review" <<<"$out"
+          tar -tzf dist/c2a-review-*-linux-arm64.tar.gz | grep -q "/install.sh$"
 
       - uses: actions/upload-artifact@v4
         with:
